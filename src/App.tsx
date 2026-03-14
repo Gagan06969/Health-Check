@@ -17,6 +17,7 @@ function App() {
   
   const [isSuggesting, setIsSuggesting] = useState<string | null>(null);
   const [suggestedMeal, setSuggestedMeal] = useState<{meal: string, text: string} | null>(null);
+  const [ingredientInputs, setIngredientInputs] = useState<Record<string, string>>({});
   
   const todayDate = format(new Date(), 'yyyy-MM-dd');
 
@@ -53,10 +54,16 @@ function App() {
 
   const handleSuggestMeal = async (mealName: string, cals: number) => {
     if (!user) return;
+    
+    // Read from inline input state instead of window.prompt
+    const ingredients = ingredientInputs[mealName] || "";
+    
     setIsSuggesting(mealName);
     try {
-      const data = await api.suggestMeal({ mealName, targetCalories: cals, dietPreference: user.dietPreference });
+      const data = await api.suggestMeal({ mealName, targetCalories: cals, dietPreference: user.dietPreference, ingredients: ingredients.trim() });
       setSuggestedMeal({ meal: mealName, text: data.suggestion });
+      // clear input after success
+      setIngredientInputs(prev => ({...prev, [mealName]: ''}));
     } catch (err) {
       alert("Failed to get suggestion. Check backend connection or AI key.");
     }
@@ -87,8 +94,12 @@ function App() {
   const afternoonCals = Math.round(goalCals * 0.4);
   const nightCals = Math.round(goalCals * 0.3);
 
-  // Burn Targets if over calorie limit
-  const excessCals = (todayLog.caloriesConsumed || 0) - goalCals;
+  // Dynamic Step Goal & Burn Targets
+  const baseStepGoal = user.stepGoal || 10000;
+  const calorieDifference = (todayLog.caloriesConsumed || 0) - goalCals;
+  const dynamicStepGoal = Math.max(0, Math.ceil(baseStepGoal + (calorieDifference / 0.04)));
+
+  const excessCals = calorieDifference;
   const targetSteps = excessCals > 0 ? Math.ceil(excessCals / 0.04) : 0;
   const targetPushups = excessCals > 0 ? Math.ceil(excessCals / 0.3) : 0;
 
@@ -151,10 +162,10 @@ function App() {
           <div className="stat-header"><Activity size={18} /> Steps Walked</div>
           <div className="stat-value">
             {todayLog.stepsWalked.toLocaleString()}
-            <span style={{ fontSize: '1rem', opacity: 0.5, marginLeft: '4px' }}>/ {user.stepGoal ? user.stepGoal.toLocaleString() : '10,000'}</span>
+            <span style={{ fontSize: '1rem', opacity: 0.5, marginLeft: '4px' }}>/ {dynamicStepGoal.toLocaleString()}</span>
           </div>
           <div style={{ color: 'var(--secondary-glow)', fontSize: '0.9rem', marginTop: 'auto' }}>
-            Burned ~{activeCalories} active calories
+            Target dynamically adjusted!
           </div>
         </div>
 
@@ -191,7 +202,15 @@ function App() {
             </button>
           </div>
           <div className="stat-value">{morningCals}<span>kcal</span></div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto' }}>
+          <input 
+            type="text" 
+            placeholder="Any ingredients? (e.g. Oats)" 
+            className="glass-input" 
+            style={{ fontSize: '0.85rem', padding: '8px 12px', marginTop: '8px', background: 'rgba(255,255,255,0.05)' }} 
+            value={ingredientInputs['Morning'] || ''}
+            onChange={(e) => setIngredientInputs(prev => ({...prev, Morning: e.target.value}))}
+          />
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto', paddingTop: '8px' }}>
             {suggestedMeal?.meal === 'Morning' ? <div style={{color: 'white', marginTop: '8px', lineHeight: '1.3'}}>{suggestedMeal.text}</div> : 'Ideal for breakfast (e.g., Poha, Oats)'}
           </div>
         </div>
@@ -204,7 +223,15 @@ function App() {
             </button>
           </div>
           <div className="stat-value">{afternoonCals}<span>kcal</span></div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto' }}>
+          <input 
+            type="text" 
+            placeholder="Any ingredients? (e.g. Rice, Dal)" 
+            className="glass-input" 
+            style={{ fontSize: '0.85rem', padding: '8px 12px', marginTop: '8px', background: 'rgba(255,255,255,0.05)' }} 
+            value={ingredientInputs['Afternoon'] || ''}
+            onChange={(e) => setIngredientInputs(prev => ({...prev, Afternoon: e.target.value}))}
+          />
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto', paddingTop: '8px' }}>
             {suggestedMeal?.meal === 'Afternoon' ? <div style={{color: 'white', marginTop: '8px', lineHeight: '1.3'}}>{suggestedMeal.text}</div> : 'Heaviest meal (e.g., Dal, Roti, Rice)'}
           </div>
         </div>
@@ -217,7 +244,15 @@ function App() {
             </button>
           </div>
           <div className="stat-value">{nightCals}<span>kcal</span></div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto' }}>
+          <input 
+            type="text" 
+            placeholder="Any ingredients? (e.g. Paneer)" 
+            className="glass-input" 
+            style={{ fontSize: '0.85rem', padding: '8px 12px', marginTop: '8px', background: 'rgba(255,255,255,0.05)' }} 
+            value={ingredientInputs['Night'] || ''}
+            onChange={(e) => setIngredientInputs(prev => ({...prev, Night: e.target.value}))}
+          />
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto', paddingTop: '8px' }}>
             {suggestedMeal?.meal === 'Night' ? <div style={{color: 'white', marginTop: '8px', lineHeight: '1.3'}}>{suggestedMeal.text}</div> : 'Lighter dinner (e.g., Paneer, Salad)'}
           </div>
         </div>

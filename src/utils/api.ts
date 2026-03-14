@@ -35,7 +35,7 @@ export const api = {
     const res = await axios.post(`${API_BASE}/chat`, { message });
     return res.data;
   },
-  suggestMeal: async (data: { mealName: string, targetCalories: number, dietPreference: string }) => {
+  suggestMeal: async (data: { mealName: string, targetCalories: number, dietPreference: string, ingredients?: string }) => {
     const res = await axios.post(`${API_BASE}/meal-suggest`, data);
     return res.data;
   }

@@ -4,9 +4,10 @@ const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const axios = require('axios');
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const aiModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
 
 const app = express();
@@ -250,43 +251,40 @@ The user is asking: "${message}".
 Please provide a brief (2-3 sentences max) estimation of the calories and nutritional profile of this food item.
 Be encouraging but strictly focused on precise numerical calorie ranges.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-    });
-    
-    res.json({ reply: response.text });
+    const result = await aiModel.generateContent(prompt);
+    const response = await result.response;
+    res.json({ reply: response.text() });
   } catch (err) {
-    console.error('Gemini API Error:', err.message);
+    console.error('Gemini API Error details:', err.message);
     res.status(500).json({ reply: "I'm sorry, I'm having trouble connecting to my brain right now. Try again in a moment!" });
   }
 });
 
 // AI Smart Meal Suggestion
 app.post('/api/meal-suggest', async (req, res) => {
-  const { mealName, targetCalories, dietPreference } = req.body;
+  const { mealName, targetCalories, dietPreference, ingredients } = req.body;
   
   if (!mealName || !targetCalories) return res.status(400).json({ error: 'Meal details required' });
 
   try {
     const dietStr = dietPreference && dietPreference !== 'Both' ? `${dietPreference} (strictly)` : 'Vegetarian or Non-Vegetarian';
+    const ingredientContext = ingredients 
+        ? `The user already has these ingredients/dishes: "${ingredients}". Prioritize using them and specify exact portion sizes (e.g. "1.5 bowls" or "2 rotis") to perfectly balance the calories.` 
+        : `Suggest Indian or common global whole-foods.`;
     
     const prompt = `You are a personalized nutritionist AI. 
 The user needs a ${mealName} suggestion that totals approximately ${targetCalories} calories.
 Their dietary preference is: ${dietStr}.
-Crucial Rule: Suggest Indian or common global whole-foods.
+Crucial Rule: ${ingredientContext}
 Provide exactly ONE, highly specific meal combination that totals exactly around ${targetCalories} calories. 
-Format your response concisely: "Just eat [Food A] (X kcal) + [Food B] (Y kcal) to hit your [${targetCalories} kcal] target."
+Format your response concisely: "Just eat [Portion] of [Food A] (X kcal) + [Portion] of [Food B] (Y kcal) to hit your [${targetCalories} kcal] target."
 Do not include conversational filler like "Here is a suggestion". Be direct and bullet-like. Keep it under 2 sentences.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-    });
-    
-    res.json({ suggestion: response.text.trim() });
+    const result = await aiModel.generateContent(prompt);
+    const response = await result.response;
+    res.json({ suggestion: response.text().trim() });
   } catch (err) {
-    console.error('Gemini API Error:', err.message);
+    console.error('Gemini API Error details:', err.message);
     res.status(500).json({ suggestion: "Failed to load a unique meal suggestion. Please try again or check your API key." });
   }
 });
