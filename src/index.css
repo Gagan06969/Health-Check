@@ -281,3 +281,13 @@ header {
   align-items: center;
   justify-content: space-between;
 }
+
+.spin-anim {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  100% {
+    transform: rotate(360deg);
+  }
+}

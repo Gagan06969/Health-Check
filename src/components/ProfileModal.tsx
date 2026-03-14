@@ -13,7 +13,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ user, onClose, onSav
     targetWeight: user?.targetWeight || 65,
     height: user?.height || 175,
     age: user?.age || 25,
-    gender: user?.gender || 'Male'
+    gender: user?.gender || 'Male',
+    dietPreference: user?.dietPreference || 'Both',
+    stepGoal: user?.stepGoal || 10000
   });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -57,6 +59,20 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ user, onClose, onSav
                 <option value="Male">Male</option>
                 <option value="Female">Female</option>
               </select>
+            </div>
+            
+            <div className="input-group">
+              <label>Dietary Preference</label>
+              <select name="dietPreference" value={formData.dietPreference} onChange={handleChange} className="glass-input">
+                <option value="Both">Both</option>
+                <option value="Veg">Vegetarian</option>
+                <option value="Non-Veg">Non-Vegetarian</option>
+              </select>
+            </div>
+            
+            <div className="input-group">
+              <label>Daily Step Goal</label>
+              <input type="number" name="stepGoal" value={formData.stepGoal} onChange={handleChange} className="glass-input" required />
             </div>
           </div>
           

@@ -35,7 +35,9 @@ const db = new sqlite3.Database(dbPath, (err) => {
         age INTEGER,
         gender TEXT,
         bmr REAL,
-        dailyGoalCalories INTEGER
+        dailyGoalCalories INTEGER,
+        dietPreference TEXT DEFAULT 'Both',
+        stepGoal INTEGER DEFAULT 10000
       )`);
 
       // Initialize default user if not exists
@@ -60,6 +62,8 @@ const db = new sqlite3.Database(dbPath, (err) => {
       // Try to add new columns if upgrading from v1
       db.run(`ALTER TABLE daily_log ADD COLUMN foods TEXT DEFAULT '[]'`, (err) => { /* ignore if exists */ });
       db.run(`ALTER TABLE daily_log ADD COLUMN exercises TEXT DEFAULT '[]'`, (err) => { /* ignore if exists */ });
+      db.run(`ALTER TABLE user ADD COLUMN dietPreference TEXT DEFAULT 'Both'`, (err) => { /* ignore */ });
+      db.run(`ALTER TABLE user ADD COLUMN stepGoal INTEGER DEFAULT 10000`, (err) => { /* ignore */ });
 
       // CustomFood table
       db.run(`CREATE TABLE IF NOT EXISTS custom_food (
@@ -91,7 +95,7 @@ app.get('/api/user', (req, res) => {
 
 // Update User Profile
 app.put('/api/user', (req, res) => {
-  const { weight, targetWeight, height, age, gender } = req.body;
+  const { weight, targetWeight, height, age, gender, dietPreference, stepGoal } = req.body;
   
   // Calculate BMR (Mifflin-St Jeor Equation)
   let bmr = 0;
@@ -110,11 +114,14 @@ app.put('/api/user', (req, res) => {
   
   bmr = Math.round(bmr);
   dailyGoalCalories = Math.round(dailyGoalCalories);
+  
+  const dietPref = dietPreference || 'Both';
+  const sGoal = stepGoal || 10000;
 
-  const stmt = `UPDATE user SET weight = ?, targetWeight = ?, height = ?, age = ?, gender = ?, bmr = ?, dailyGoalCalories = ? WHERE id = 1`;
-  db.run(stmt, [weight, targetWeight, height, age, gender, bmr, dailyGoalCalories], function(err) {
+  const stmt = `UPDATE user SET weight = ?, targetWeight = ?, height = ?, age = ?, gender = ?, bmr = ?, dailyGoalCalories = ?, dietPreference = ?, stepGoal = ? WHERE id = 1`;
+  db.run(stmt, [weight, targetWeight, height, age, gender, bmr, dailyGoalCalories, dietPref, sGoal], function(err) {
     if (err) res.status(500).json({ error: err.message });
-    else res.json({ success: true, bmr, dailyGoalCalories });
+    else res.json({ success: true, bmr, dailyGoalCalories, dietPreference: dietPref, stepGoal: sGoal });
   });
 });
 
@@ -252,6 +259,35 @@ Be encouraging but strictly focused on precise numerical calorie ranges.`;
   } catch (err) {
     console.error('Gemini API Error:', err.message);
     res.status(500).json({ reply: "I'm sorry, I'm having trouble connecting to my brain right now. Try again in a moment!" });
+  }
+});
+
+// AI Smart Meal Suggestion
+app.post('/api/meal-suggest', async (req, res) => {
+  const { mealName, targetCalories, dietPreference } = req.body;
+  
+  if (!mealName || !targetCalories) return res.status(400).json({ error: 'Meal details required' });
+
+  try {
+    const dietStr = dietPreference && dietPreference !== 'Both' ? `${dietPreference} (strictly)` : 'Vegetarian or Non-Vegetarian';
+    
+    const prompt = `You are a personalized nutritionist AI. 
+The user needs a ${mealName} suggestion that totals approximately ${targetCalories} calories.
+Their dietary preference is: ${dietStr}.
+Crucial Rule: Suggest Indian or common global whole-foods.
+Provide exactly ONE, highly specific meal combination that totals exactly around ${targetCalories} calories. 
+Format your response concisely: "Just eat [Food A] (X kcal) + [Food B] (Y kcal) to hit your [${targetCalories} kcal] target."
+Do not include conversational filler like "Here is a suggestion". Be direct and bullet-like. Keep it under 2 sentences.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+    });
+    
+    res.json({ suggestion: response.text.trim() });
+  } catch (err) {
+    console.error('Gemini API Error:', err.message);
+    res.status(500).json({ suggestion: "Failed to load a unique meal suggestion. Please try again or check your API key." });
   }
 });
 

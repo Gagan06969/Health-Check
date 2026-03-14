@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { Settings, Plus, Activity, HeartPulse, Target, Flame, PieChart } from 'lucide-react';
+import { Settings, Plus, Activity, HeartPulse, Target, Flame, PieChart, Sparkles } from 'lucide-react';
 import { ProfileModal } from './components/ProfileModal';
 import { LogModal } from './components/LogModal';
 import { Chatbot } from './components/Chatbot';
@@ -14,6 +14,9 @@ function App() {
   
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showLogModal, setShowLogModal] = useState(false);
+  
+  const [isSuggesting, setIsSuggesting] = useState<string | null>(null);
+  const [suggestedMeal, setSuggestedMeal] = useState<{meal: string, text: string} | null>(null);
   
   const todayDate = format(new Date(), 'yyyy-MM-dd');
 
@@ -46,6 +49,18 @@ function App() {
     await api.saveLog(data);
     setShowLogModal(false);
     fetchData(); // Refresh data
+  };
+
+  const handleSuggestMeal = async (mealName: string, cals: number) => {
+    if (!user) return;
+    setIsSuggesting(mealName);
+    try {
+      const data = await api.suggestMeal({ mealName, targetCalories: cals, dietPreference: user.dietPreference });
+      setSuggestedMeal({ meal: mealName, text: data.suggestion });
+    } catch (err) {
+      alert("Failed to get suggestion. Check backend connection or AI key.");
+    }
+    setIsSuggesting(null);
   };
 
   if (!user || !todayLog) {
@@ -134,7 +149,10 @@ function App() {
         {/* Metric Cards */}
         <div className="glass-panel stat-card">
           <div className="stat-header"><Activity size={18} /> Steps Walked</div>
-          <div className="stat-value">{todayLog.stepsWalked.toLocaleString()}</div>
+          <div className="stat-value">
+            {todayLog.stepsWalked.toLocaleString()}
+            <span style={{ fontSize: '1rem', opacity: 0.5, marginLeft: '4px' }}>/ {user.stepGoal ? user.stepGoal.toLocaleString() : '10,000'}</span>
+          </div>
           <div style={{ color: 'var(--secondary-glow)', fontSize: '0.9rem', marginTop: 'auto' }}>
             Burned ~{activeCalories} active calories
           </div>
@@ -165,22 +183,43 @@ function App() {
         <PieChart size={20} className="text-purple" /> Recommended Macro Split (Meals)
       </h3>
       <div className="dashboard-grid">
-        <div className="glass-panel stat-card" style={{ background: 'linear-gradient(135deg, rgba(253, 186, 116, 0.1), rgba(0,0,0,0.3))', borderColor: 'rgba(253, 186, 116, 0.2)' }}>
-          <div className="stat-header" style={{ color: '#fdba74' }}>Morning Intake (30%)</div>
+        <div className="glass-panel stat-card" style={{ background: 'linear-gradient(135deg, rgba(253, 186, 116, 0.1), rgba(0,0,0,0.3))', borderColor: 'rgba(253, 186, 116, 0.2)', display: 'flex', flexDirection: 'column' }}>
+          <div className="stat-header" style={{ color: '#fdba74', justifyContent: 'space-between' }}>
+            Morning In (30%)
+            <button className="btn-icon" onClick={() => handleSuggestMeal('Morning', morningCals)} style={{ color: '#fdba74', padding: '4px', background: 'rgba(253, 186, 116, 0.1)' }} disabled={isSuggesting === 'Morning'}>
+              <Sparkles size={16} className={isSuggesting === 'Morning' ? 'spin-anim' : ''} />
+            </button>
+          </div>
           <div className="stat-value">{morningCals}<span>kcal</span></div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto' }}>Ideal for breakfast (e.g., Poha, Oats)</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto' }}>
+            {suggestedMeal?.meal === 'Morning' ? <div style={{color: 'white', marginTop: '8px', lineHeight: '1.3'}}>{suggestedMeal.text}</div> : 'Ideal for breakfast (e.g., Poha, Oats)'}
+          </div>
         </div>
         
-        <div className="glass-panel stat-card" style={{ background: 'linear-gradient(135deg, rgba(252, 211, 77, 0.1), rgba(0,0,0,0.3))', borderColor: 'rgba(252, 211, 77, 0.2)' }}>
-          <div className="stat-header" style={{ color: '#fcd34d' }}>Afternoon Intake (40%)</div>
+        <div className="glass-panel stat-card" style={{ background: 'linear-gradient(135deg, rgba(252, 211, 77, 0.1), rgba(0,0,0,0.3))', borderColor: 'rgba(252, 211, 77, 0.2)', display: 'flex', flexDirection: 'column' }}>
+          <div className="stat-header" style={{ color: '#fcd34d', justifyContent: 'space-between' }}>
+            Afternoon (40%)
+            <button className="btn-icon" onClick={() => handleSuggestMeal('Afternoon', afternoonCals)} style={{ color: '#fcd34d', padding: '4px', background: 'rgba(252, 211, 77, 0.1)' }} disabled={isSuggesting === 'Afternoon'}>
+              <Sparkles size={16} className={isSuggesting === 'Afternoon' ? 'spin-anim' : ''} />
+            </button>
+          </div>
           <div className="stat-value">{afternoonCals}<span>kcal</span></div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto' }}>Heaviest meal (e.g., Dal, Roti, Rice)</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto' }}>
+            {suggestedMeal?.meal === 'Afternoon' ? <div style={{color: 'white', marginTop: '8px', lineHeight: '1.3'}}>{suggestedMeal.text}</div> : 'Heaviest meal (e.g., Dal, Roti, Rice)'}
+          </div>
         </div>
 
-        <div className="glass-panel stat-card" style={{ background: 'linear-gradient(135deg, rgba(167, 139, 250, 0.1), rgba(0,0,0,0.3))', borderColor: 'rgba(167, 139, 250, 0.2)' }}>
-          <div className="stat-header" style={{ color: '#a78bfa' }}>Night Intake (30%)</div>
+        <div className="glass-panel stat-card" style={{ background: 'linear-gradient(135deg, rgba(167, 139, 250, 0.1), rgba(0,0,0,0.3))', borderColor: 'rgba(167, 139, 250, 0.2)', display: 'flex', flexDirection: 'column' }}>
+          <div className="stat-header" style={{ color: '#a78bfa', justifyContent: 'space-between' }}>
+            Night In (30%)
+            <button className="btn-icon" onClick={() => handleSuggestMeal('Night', nightCals)} style={{ color: '#a78bfa', padding: '4px', background: 'rgba(167, 139, 250, 0.1)' }} disabled={isSuggesting === 'Night'}>
+              <Sparkles size={16} className={isSuggesting === 'Night' ? 'spin-anim' : ''} />
+            </button>
+          </div>
           <div className="stat-value">{nightCals}<span>kcal</span></div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto' }}>Lighter dinner (e.g., Paneer, Salad)</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto' }}>
+            {suggestedMeal?.meal === 'Night' ? <div style={{color: 'white', marginTop: '8px', lineHeight: '1.3'}}>{suggestedMeal.text}</div> : 'Lighter dinner (e.g., Paneer, Salad)'}
+          </div>
         </div>
       </div>
 
