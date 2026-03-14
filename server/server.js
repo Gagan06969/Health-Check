@@ -55,6 +55,14 @@ const db = new sqlite3.Database(dbPath, (err) => {
       // Try to add new columns if upgrading from v1
       db.run(`ALTER TABLE daily_log ADD COLUMN foods TEXT DEFAULT '[]'`, (err) => { /* ignore if exists */ });
       db.run(`ALTER TABLE daily_log ADD COLUMN exercises TEXT DEFAULT '[]'`, (err) => { /* ignore if exists */ });
+
+      // CustomFood table
+      db.run(`CREATE TABLE IF NOT EXISTS custom_food (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE,
+        calories_per_serving INTEGER,
+        serving_unit TEXT
+      )`);
     });
   }
 });
@@ -144,33 +152,79 @@ app.post('/api/logs', (req, res) => {
   });
 });
 
-// Search Food via OpenFoodFacts
+// Search Food via OpenFoodFacts and Local Custom DB
 app.get('/api/food/search', async (req, res) => {
   const { query } = req.query;
   if (!query) return res.status(400).json({ error: 'Query parameter required' });
   
   try {
-    // Search OpenFoodFacts for the product
-    const response = await axios.get(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=5`);
-    
-    if (response.data && response.data.products) {
-      const items = response.data.products
-        .filter(p => p.nutriments && p.nutriments['energy-kcal_100g']) // Only return items with known calories
-        .map(p => ({
-          name: p.product_name || p.generic_name || query,
-          brand: p.brands,
-          calories_per_100g: p.nutriments['energy-kcal_100g'],
-          image: p.image_front_thumb_url
+    // First, search our local CustomFoods DB
+    const customQuery = `%${query}%`;
+    db.all(`SELECT * FROM custom_food WHERE name LIKE ? LIMIT 5`, [customQuery], async (err, customRows) => {
+      let results = [];
+      if (!err && customRows) {
+        results = customRows.map(row => ({
+          id: `custom_${row.id}`,
+          name: row.name,
+          brand: 'Custom',
+          calories_per_100g: row.calories_per_serving, // Abusing this field for simplicity, it means per serving here
+          unit: row.serving_unit, // Ensure we pass the unit to the frontend
+          image: null
         }));
+      }
+
+      // Then fallback to OpenFoodFacts for more
+      try {
+        const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=15&tagtype_0=countries&tag_contains_0=contains&tag_0=india`;
+        const response = await axios.get(url);
         
-      res.json({ results: items });
-    } else {
-      res.json({ results: [] });
-    }
+        if (response.data && response.data.products) {
+          let items = response.data.products
+            .filter(p => p.nutriments && p.nutriments['energy-kcal_100g'])
+            .map(p => ({
+              id: p._id || p.id,
+              name: p.product_name || p.generic_name || query,
+              brand: p.brands ? p.brands.split(',')[0] : 'Generic',
+              calories_per_100g: p.nutriments['energy-kcal_100g'],
+              unit: '100g', // Standard API unit
+              image: p.image_front_thumb_url
+            }));
+          
+          items = items.filter((item, index, self) => index === self.findIndex((t) => (t.name === item.name)));
+          
+          // Combine and return top 8
+          res.json({ results: [...results, ...items].slice(0, 8) });
+        } else {
+          res.json({ results });
+        }
+      } catch (externalErr) {
+        // If external API fails (e.g. 504), return at least local results
+        console.error('OpenFoodFacts API error:', externalErr.message);
+        res.json({ results });
+      }
+    });
   } catch (err) {
-    console.error('OpenFoodFacts API error:', err.message);
     res.status(500).json({ error: 'Failed to fetch food details' });
   }
+});
+
+// Create Custom Food
+app.post('/api/food/custom', (req, res) => {
+  const { name, calories_per_serving, serving_unit } = req.body;
+  if (!name || typeof calories_per_serving !== 'number' || !serving_unit) {
+    return res.status(400).json({ error: 'Missing required custom food fields' });
+  }
+
+  const stmt = `INSERT INTO custom_food (name, calories_per_serving, serving_unit) VALUES (?, ?, ?)`;
+  db.run(stmt, [name, calories_per_serving, serving_unit], function(err) {
+    if (err) {
+      if (err.message.includes('UNIQUE constraint')) {
+        return res.status(400).json({ error: 'Food with this name already exists' });
+      }
+      return res.status(500).json({ error: err.message });
+    }
+    res.json({ success: true, id: this.lastID, name, calories_per_serving, serving_unit });
+  });
 });
 
 // Get Weekly Analysis data (last 7 days)

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Flame, Search, Check, Plus, Dumbbell, Utensils } from 'lucide-react';
+import { X, Flame, Check, Dumbbell, Utensils } from 'lucide-react';
 import { api } from '../utils/api';
 
 interface LogModalProps {
@@ -18,7 +18,6 @@ const HOME_EXERCISES = [
 ];
 
 export const LogModal: React.FC<LogModalProps> = ({ currentLog, date, onClose, onSave }) => {
-  // Try to parse existing data correctly (migrated from text to JSON arrays previously)
   const safeParseJSON = (data: any, fallback: any) => {
     if (!data) return fallback;
     if (typeof data === 'string') {
@@ -36,37 +35,54 @@ export const LogModal: React.FC<LogModalProps> = ({ currentLog, date, onClose, o
   const [foods, setFoods] = useState<any[]>(initialFoods);
   const [exercisesData, setExercisesData] = useState<any[]>(initialExercises);
 
+  // Meal Segment State
+  const [activeMeal, setActiveMeal] = useState<'Morning' | 'Afternoon' | 'Night'>('Morning');
+
   // Food Search state
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
 
-  // Quick Add State (Fallback)
-  const [quickFoodItem, setQuickFoodItem] = useState('');
-  const [quickFoodCals, setQuickFoodCals] = useState('');
+  // Custom Food state
+  const [showCustomForm, setShowCustomForm] = useState(false);
+  const [customName, setCustomName] = useState('');
+  const [customCals, setCustomCals] = useState('');
+  const [customUnit, setCustomUnit] = useState('bowl');
 
-  // Handle Free Food Search
-  const handleSearch = async () => {
-    if (!searchQuery) return;
-    setIsSearching(true);
-    try {
-      const data = await api.searchFood(searchQuery);
-      setSearchResults(data.results || []);
-    } catch (err) {
-      console.error(err);
-    }
-    setIsSearching(false);
-  };
+  // Handle Free Food Search (with Debounce)
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(async () => {
+      if (searchQuery.length > 2) {
+        setIsSearching(true);
+        try {
+          const data = await api.searchFood(searchQuery);
+          setSearchResults(data.results || []);
+        } catch (err) {
+          console.error(err);
+        }
+        setIsSearching(false);
+      } else {
+        setSearchResults([]);
+      }
+    }, 500);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchQuery]);
 
   // Select Food from API results
   const addFoodFromApi = (item: any) => {
-    // Prompt for quantity intuitively using browser generic prompt for MVP simplicity
-    const quantityStr = prompt(`How many 100g servings of ${item.name} did you have?`, '1');
+    const defaultUnit = item.unit || '100g';
+    const quantityStr = prompt(`How many ${defaultUnit}(s) of ${item.name} did you have for ${activeMeal}?`, '1');
     if (quantityStr && !isNaN(Number(quantityStr))) {
       const quantity = Number(quantityStr);
       const totalCals = Math.round(item.calories_per_100g * quantity);
       
-      const newFood = { name: item.name, calories: totalCals, quantity: `${quantity} servings` };
+      const newFood = { 
+        name: item.name, 
+        calories: totalCals, 
+        quantity: `${quantity} ${defaultUnit}`,
+        mealType: activeMeal
+      };
       setFoods([...foods, newFood]);
       setCaloriesConsumed((prev: number) => prev + totalCals);
       setSearchResults([]);
@@ -74,13 +90,33 @@ export const LogModal: React.FC<LogModalProps> = ({ currentLog, date, onClose, o
     }
   };
 
-  const handleQuickAddFood = () => {
-    if (quickFoodCals && !isNaN(Number(quickFoodCals))) {
-      const cals = Number(quickFoodCals);
-      setCaloriesConsumed((prev: number) => prev + cals);
-      setFoods([...foods, { name: quickFoodItem || 'Custom Food', calories: cals }]);
-      setQuickFoodItem('');
-      setQuickFoodCals('');
+  const handleCreateCustomFood = async () => {
+    if (!customName || !customCals || !customUnit || isNaN(Number(customCals))) return;
+    
+    try {
+      // Save to database so it exists forever
+      const cals = Number(customCals);
+      await api.createCustomFood({
+        name: customName,
+        calories_per_serving: cals,
+        serving_unit: customUnit
+      });
+      
+      // Auto-log it for the user right now
+      const quantityStr = prompt(`Awesome! How many ${customUnit}(s) of ${customName} did you have for ${activeMeal}?`, '1');
+      if (quantityStr && !isNaN(Number(quantityStr))) {
+        const quantity = Number(quantityStr);
+        const totalCals = Math.round(cals * quantity);
+        setFoods([...foods, { name: customName, calories: totalCals, quantity: `${quantity} ${customUnit}`, mealType: activeMeal }]);
+        setCaloriesConsumed((prev: number) => prev + totalCals);
+      }
+      
+      setShowCustomForm(false);
+      setCustomName('');
+      setCustomCals('');
+      setSearchQuery('');
+    } catch (err) {
+      alert('Error creating custom food. Name might already exist.');
     }
   };
 
@@ -99,7 +135,6 @@ export const LogModal: React.FC<LogModalProps> = ({ currentLog, date, onClose, o
   };
 
   const handleSubmit = () => {
-    // Calculate total burned including steps AND custom exercises
     const stepsCals = Math.round(stepsWalked * 0.04);
     const exerciseCals = exercisesData.reduce((sum, ex) => sum + (ex.totalCals || 0), 0);
     const totalBurned = stepsCals + exerciseCals;
@@ -114,36 +149,59 @@ export const LogModal: React.FC<LogModalProps> = ({ currentLog, date, onClose, o
     });
   };
 
+  // Group foods for rendering
+  const foodsByMeal = {
+    Morning: foods.filter(f => f.mealType === 'Morning' || !f.mealType), // fallback for old logs
+    Afternoon: foods.filter(f => f.mealType === 'Afternoon'),
+    Night: foods.filter(f => f.mealType === 'Night'),
+  };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content glass-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: '600px' }}>
+      <div className="modal-content glass-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: '600px', maxHeight: '90vh', overflowY: 'auto' }}>
         <div className="modal-header">
-          <h2>Log Activity & Food</h2>
+          <h2>Log Activity & Meals</h2>
           <button className="modal-close" onClick={onClose}><X size={24} /></button>
         </div>
         
-        {/* FOOD SECTION */}
+        {/* MEAL TABS */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', background: 'rgba(0,0,0,0.2)', padding: '6px', borderRadius: '12px' }}>
+          {['Morning', 'Afternoon', 'Night'].map((meal) => (
+            <button 
+              key={meal}
+              onClick={() => setActiveMeal(meal as any)}
+              style={{ 
+                flex: 1, padding: '10px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                background: activeMeal === meal ? 'var(--accent-color)' : 'transparent',
+                color: activeMeal === meal ? 'white' : 'var(--text-muted)',
+                fontWeight: activeMeal === meal ? 'bold' : 'normal',
+                transition: 'all 0.2s'
+              }}
+            >
+              {meal}
+            </button>
+          ))}
+        </div>
+
+        {/* FOOD SECTION FOR ACTIVE MEAL */}
         <div style={{ marginBottom: '32px' }}>
           <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-            <Utensils size={20} className="text-purple" /> Food Library Search
+            <Utensils size={20} className="text-purple" /> {activeMeal} Food
           </h3>
           
           <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
             <input 
               type="text" 
-              placeholder="Search for any food (e.g., Apple, Roti, Chicken)..." 
+              placeholder={`Search to log ${activeMeal} food...`} 
               className="glass-input" 
               style={{ flex: 1 }}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
             />
-            <button className="btn-primary" onClick={handleSearch} disabled={isSearching}>
-              {isSearching ? '...' : <Search size={18} />}
-            </button>
+            {isSearching && <span style={{ padding: '8px', color: 'var(--text-muted)' }}>...</span>}
           </div>
 
-          {/* Search Results Dropdown-like UI inline */}
+          {/* Search Results */}
           {searchResults.length > 0 && (
             <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '12px', marginBottom: '16px' }}>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '8px' }}>Select an item to add quantity:</div>
@@ -152,29 +210,69 @@ export const LogModal: React.FC<LogModalProps> = ({ currentLog, date, onClose, o
                   <div>
                     <strong>{item.name}</strong> {item.brand ? <span style={{fontSize: '0.8rem', opacity: 0.7}}>({item.brand})</span> : null}
                   </div>
-                  <div className="text-emerald">{Math.round(item.calories_per_100g)} kcal / 100g</div>
+                  <div className="text-emerald">{Math.round(item.calories_per_100g)} kcal / {item.unit || '100g'}</div>
                 </div>
               ))}
+              <div style={{ textAlign: 'center', marginTop: '8px' }}>
+                 <button onClick={() => { setSearchResults([]); setShowCustomForm(true); }} style={{ background: 'none', border: 'none', color: 'var(--accent-color)', cursor: 'pointer', fontSize: '0.85rem' }}>
+                   Not what you're looking for? Add Custom Food
+                 </button>
+              </div>
             </div>
           )}
 
-          {/* Quick Fallback */}
-          <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-            <input type="text" placeholder="Custom food name" className="glass-input" style={{ flex: 1 }} value={quickFoodItem} onChange={e => setQuickFoodItem(e.target.value)} />
-            <input type="number" placeholder="Cals" className="glass-input" style={{ width: '80px' }} value={quickFoodCals} onChange={e => setQuickFoodCals(e.target.value)} />
-            <button className="btn-primary" style={{ padding: '0 12px' }} onClick={handleQuickAddFood}><Plus size={18} /></button>
-          </div>
-
-          {/* Eaten List */}
-          {foods.length > 0 && (
-            <div style={{ marginTop: '16px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-              {foods.map((f, i) => (
-                <span key={i} style={{ background: 'var(--secondary-glow)', padding: '4px 12px', borderRadius: '16px', fontSize: '0.9rem' }}>
-                  {f.name} ({f.calories} kcal)
-                </span>
-              ))}
+          {/* Fallback IF NO RESULTS but searching */}
+          {searchQuery.length > 2 && searchResults.length === 0 && !isSearching && !showCustomForm && (
+            <div style={{ padding: '12px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', textAlign: 'center', marginBottom: '16px' }}>
+               <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '8px' }}>Could not find "{searchQuery}"</p>
+               <button className="btn-primary" onClick={() => setShowCustomForm(true)}>+ Create Custom Indian Dish</button>
             </div>
           )}
+
+          {/* CUSTOM FOOD FORM */}
+          {showCustomForm && (
+            <div style={{ background: 'rgba(167, 139, 250, 0.1)', border: '1px solid rgba(167, 139, 250, 0.3)', padding: '16px', borderRadius: '12px', marginBottom: '16px' }}>
+               <h4 style={{ marginBottom: '12px', color: '#a78bfa' }}>Add Custom Food to Database</h4>
+               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '8px', marginBottom: '12px' }}>
+                 <input type="text" placeholder="Dish Name (e.g. Maa Ki Dal)" className="glass-input" value={customName} onChange={e => setCustomName(e.target.value)} />
+                 <div style={{ display: 'flex', gap: '8px' }}>
+                    <input type="number" placeholder="Calories" className="glass-input" style={{ flex: 1 }} value={customCals} onChange={e => setCustomCals(e.target.value)} />
+                    <span style={{ display: 'flex', alignItems: 'center', color: 'var(--text-muted)' }}>per</span>
+                    <select className="glass-input" value={customUnit} onChange={e => setCustomUnit(e.target.value)} style={{ width: '100px' }}>
+                      <option value="bowl">Bowl</option>
+                      <option value="piece">Piece</option>
+                      <option value="plate">Plate</option>
+                      <option value="100g">100g</option>
+                      <option value="cup">Cup</option>
+                    </select>
+                 </div>
+               </div>
+               <div style={{ display: 'flex', gap: '8px' }}>
+                 <button className="btn-primary" style={{ flex: 1 }} onClick={handleCreateCustomFood}>Save & Add</button>
+                 <button onClick={() => setShowCustomForm(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0 12px' }}>Cancel</button>
+               </div>
+            </div>
+          )}
+
+          {/* Eaten List (Categorized) */}
+          {['Morning', 'Afternoon', 'Night'].map(meal => {
+            const mealFoods = foodsByMeal[meal as keyof typeof foodsByMeal];
+            if (mealFoods.length === 0) return null;
+            return (
+              <div key={meal} style={{ marginTop: '16px' }}>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '8px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '4px' }}>
+                  {meal} Items:
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {mealFoods.map((f, i) => (
+                    <span key={i} style={{ background: 'var(--secondary-glow)', padding: '4px 12px', borderRadius: '16px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {f.name} <span style={{ opacity: 0.7, fontSize: '0.8rem' }}>({f.quantity} / {f.calories} kcal)</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {/* EXERCISE SECTION */}

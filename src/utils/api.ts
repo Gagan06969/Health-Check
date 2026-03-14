@@ -26,5 +26,9 @@ export const api = {
   searchFood: async (query: string) => {
     const res = await axios.get(`${API_BASE}/food/search?query=${encodeURIComponent(query)}`);
     return res.data;
+  },
+  createCustomFood: async (data: any) => {
+    const res = await axios.post(`${API_BASE}/food/custom`, data);
+    return res.data;
   }
 };

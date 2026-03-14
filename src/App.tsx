@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { Settings, Plus, Activity, HeartPulse, Target, Flame, X } from 'lucide-react';
+import { Settings, Plus, Activity, HeartPulse, Target, Flame, PieChart } from 'lucide-react';
 import { ProfileModal } from './components/ProfileModal';
 import { LogModal } from './components/LogModal';
 import { api } from './utils/api';
@@ -61,11 +61,15 @@ function App() {
   const tdee = bmr + activeCalories;
   
   const calorieDeficit = tdee - (todayLog.caloriesConsumed || 0);
-  const netCalories = todayLog.caloriesConsumed - activeCalories; 
   
   // Progress calculations
   const goalCals = user.dailyGoalCalories || 2000;
   const progressRatio = Math.min((todayLog.caloriesConsumed / goalCals) * 100, 100);
+
+  // Meal planning (30% / 40% / 30%)
+  const morningCals = Math.round(goalCals * 0.3);
+  const afternoonCals = Math.round(goalCals * 0.4);
+  const nightCals = Math.round(goalCals * 0.3);
 
   return (
     <div className="app-container">
@@ -137,6 +141,30 @@ function App() {
             {calorieDeficit > 500 ? 'Great deficit for weight loss!' : 
              calorieDeficit > 0 ? 'Slight deficit.' : 'You are in a caloric surplus.'}
           </div>
+        </div>
+      </div>
+
+      {/* Meal Targets (New Feature) */}
+      <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '16px 0 -8px 0', fontSize: '1.2rem' }}>
+        <PieChart size={20} className="text-purple" /> Recommended Macro Split (Meals)
+      </h3>
+      <div className="dashboard-grid">
+        <div className="glass-panel stat-card" style={{ background: 'linear-gradient(135deg, rgba(253, 186, 116, 0.1), rgba(0,0,0,0.3))', borderColor: 'rgba(253, 186, 116, 0.2)' }}>
+          <div className="stat-header" style={{ color: '#fdba74' }}>Morning Intake (30%)</div>
+          <div className="stat-value">{morningCals}<span>kcal</span></div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto' }}>Ideal for breakfast (e.g., Poha, Oats)</div>
+        </div>
+        
+        <div className="glass-panel stat-card" style={{ background: 'linear-gradient(135deg, rgba(252, 211, 77, 0.1), rgba(0,0,0,0.3))', borderColor: 'rgba(252, 211, 77, 0.2)' }}>
+          <div className="stat-header" style={{ color: '#fcd34d' }}>Afternoon Intake (40%)</div>
+          <div className="stat-value">{afternoonCals}<span>kcal</span></div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto' }}>Heaviest meal (e.g., Dal, Roti, Rice)</div>
+        </div>
+
+        <div className="glass-panel stat-card" style={{ background: 'linear-gradient(135deg, rgba(167, 139, 250, 0.1), rgba(0,0,0,0.3))', borderColor: 'rgba(167, 139, 250, 0.2)' }}>
+          <div className="stat-header" style={{ color: '#a78bfa' }}>Night Intake (30%)</div>
+          <div className="stat-value">{nightCals}<span>kcal</span></div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto' }}>Lighter dinner (e.g., Paneer, Salad)</div>
         </div>
       </div>
 
