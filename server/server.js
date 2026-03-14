@@ -1,8 +1,13 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const axios = require('axios');
+const { GoogleGenAI } = require('@google/genai');
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -225,6 +230,29 @@ app.post('/api/food/custom', (req, res) => {
     }
     res.json({ success: true, id: this.lastID, name, calories_per_serving, serving_unit });
   });
+});
+
+// AI Chatbot Endpoint (Live Gemini Model)
+app.post('/api/chat', async (req, res) => {
+  const { message } = req.body;
+  if (!message) return res.status(400).json({ error: 'Message required' });
+
+  try {
+    const prompt = `You are a helpful, concise AI Nutritionist for a fitness tracker application. 
+The user is asking: "${message}".
+Please provide a brief (2-3 sentences max) estimation of the calories and nutritional profile of this food item.
+Be encouraging but strictly focused on precise numerical calorie ranges.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+    });
+    
+    res.json({ reply: response.text });
+  } catch (err) {
+    console.error('Gemini API Error:', err.message);
+    res.status(500).json({ reply: "I'm sorry, I'm having trouble connecting to my brain right now. Try again in a moment!" });
+  }
 });
 
 // Get Weekly Analysis data (last 7 days)

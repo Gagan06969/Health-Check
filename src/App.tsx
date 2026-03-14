@@ -4,6 +4,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, 
 import { Settings, Plus, Activity, HeartPulse, Target, Flame, PieChart } from 'lucide-react';
 import { ProfileModal } from './components/ProfileModal';
 import { LogModal } from './components/LogModal';
+import { Chatbot } from './components/Chatbot';
 import { api } from './utils/api';
 
 function App() {
@@ -71,6 +72,11 @@ function App() {
   const afternoonCals = Math.round(goalCals * 0.4);
   const nightCals = Math.round(goalCals * 0.3);
 
+  // Burn Targets if over calorie limit
+  const excessCals = (todayLog.caloriesConsumed || 0) - goalCals;
+  const targetSteps = excessCals > 0 ? Math.ceil(excessCals / 0.04) : 0;
+  const targetPushups = excessCals > 0 ? Math.ceil(excessCals / 0.3) : 0;
+
   return (
     <div className="app-container">
       <header>
@@ -102,6 +108,16 @@ function App() {
                   <span className="text-indigo" style={{ marginLeft: '8px' }}>Goal reached!</span>
                 )}
               </div>
+              {excessCals > 0 && (
+                 <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '8px', fontSize: '0.85rem' }}>
+                    <div style={{ color: '#fca5a5', fontWeight: 'bold', marginBottom: '8px' }}>🔥 Burn Excess Calories (+{excessCals} kcal):</div>
+                    <ul style={{ margin: 0, paddingLeft: '20px', color: 'white' }}>
+                      <li>Walk <strong>~{targetSteps.toLocaleString()} steps</strong></li>
+                      <li style={{ color: 'var(--text-muted)', listStyle: 'none', marginLeft: '-20px', margin: '4px 0' }}>OR</li>
+                      <li>Do <strong>~{targetPushups} Pushups</strong></li>
+                    </ul>
+                 </div>
+              )}
             </div>
             <div style={{ textAlign: 'right' }}>
               <div className="stat-header" style={{ justifyContent: 'flex-end' }}>Calories Consumed vs Goal</div>
@@ -193,6 +209,8 @@ function App() {
       {showProfileModal && <ProfileModal user={user} onClose={() => setShowProfileModal(false)} onSave={handleProfileSave} />}
       {showLogModal && <LogModal currentLog={todayLog} date={todayDate} onClose={() => setShowLogModal(false)} onSave={handleLogSave} />}
     
+      {/* AI Chatbot */}
+      <Chatbot />
     </div>
   );
 }

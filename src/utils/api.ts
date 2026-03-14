@@ -30,5 +30,9 @@ export const api = {
   createCustomFood: async (data: any) => {
     const res = await axios.post(`${API_BASE}/food/custom`, data);
     return res.data;
+  },
+  chat: async (message: string) => {
+    const res = await axios.post(`${API_BASE}/chat`, { message });
+    return res.data;
   }
 };
