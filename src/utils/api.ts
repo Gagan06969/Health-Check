@@ -1,42 +1,103 @@
-import axios from 'axios';
+import axios from "axios";
+import type { 
+  User, 
+  DailyLog, 
+  FoodSearchResult, 
+  ChatResponse, 
+  MealSuggestionResponse 
+} from "../types";
 
-const API_BASE = 'http://localhost:3001/api';
+const API_BASE = "/api";
+
+// Create an axios instance that automatically includes the user ID
+const client = axios.create({
+  baseURL: API_BASE,
+});
+
+client.interceptors.request.use((config) => {
+  const userId = localStorage.getItem('health_tracker_user_id');
+  if (userId) {
+    config.headers['x-user-id'] = userId;
+  }
+  return config;
+});
 
 export const api = {
-  getUser: async () => {
-    const res = await axios.get(`${API_BASE}/user`);
+
+  // --- AUTH ---
+  sendOtp: async (email: string): Promise<{ success: boolean; message: string }> => {
+    const res = await client.post(`/auth/send-otp`, { email });
     return res.data;
   },
-  updateUser: async (data: any) => {
-    const res = await axios.put(`${API_BASE}/user`, data);
+
+  verifyOtp: async (email: string, otp: string): Promise<{ success: boolean; userId: number; hasProfile: boolean }> => {
+    const res = await client.post(`/auth/verify-otp`, { email, otp });
+    if (res.data.success) {
+      localStorage.setItem('health_tracker_user_id', res.data.userId.toString());
+    }
     return res.data;
   },
-  getLog: async (date: string) => {
-    const res = await axios.get(`${API_BASE}/logs/${date}`);
+
+  logout: () => {
+    localStorage.removeItem('health_tracker_user_id');
+  },
+
+  // --- PROFILE ---
+  getUser: async (): Promise<User | null> => {
+    const res = await client.get(`/user`);
     return res.data;
   },
-  saveLog: async (data: any) => {
-    const res = await axios.post(`${API_BASE}/logs`, data);
+
+  updateUser: async (data: Partial<User>): Promise<{ success: boolean; bmr: number; dailyGoalCalories: number }> => {
+    const res = await client.put(`/user`, data);
     return res.data;
   },
-  getWeekly: async () => {
-    const res = await axios.get(`${API_BASE}/weekly`);
+
+  // --- LOGS ---
+  getLog: async (date: string): Promise<DailyLog> => {
+    const res = await client.get(`/logs/${date}`);
     return res.data;
   },
-  searchFood: async (query: string) => {
-    const res = await axios.get(`${API_BASE}/food/search?query=${encodeURIComponent(query)}`);
+
+  saveLog: async (data: DailyLog): Promise<{ success: boolean }> => {
+    const res = await client.post(`/logs`, data);
     return res.data;
   },
-  createCustomFood: async (data: any) => {
-    const res = await axios.post(`${API_BASE}/food/custom`, data);
+
+  getWeekly: async (): Promise<DailyLog[]> => {
+    const res = await client.get(`/weekly`);
     return res.data;
   },
-  chat: async (message: string) => {
-    const res = await axios.post(`${API_BASE}/chat`, { message });
+
+  // --- FOOD ---
+  searchFood: async (query: string): Promise<{ results: FoodSearchResult[] }> => {
+    const res = await client.get(`/food/search?query=${encodeURIComponent(query)}`);
     return res.data;
   },
-  suggestMeal: async (data: { mealName: string, targetCalories: number, dietPreference: string, ingredients?: string }) => {
-    const res = await axios.post(`${API_BASE}/meal-suggest`, data);
+
+  createCustomFood: async (data: {
+    name: string;
+    calories_per_serving: number;
+    serving_unit: string;
+  }): Promise<{ success: boolean }> => {
+    const res = await client.post(`/food/custom`, data);
+    return res.data;
+  },
+
+  // --- AI ---
+  chat: async (message: string): Promise<ChatResponse> => {
+    const res = await client.post(`/chat`, { message });
+    return res.data;
+  },
+
+  suggestMeal: async (data: {
+    mealName: string;
+    targetCalories: number;
+    dietPreference: string;
+    ingredients?: string;
+  }): Promise<MealSuggestionResponse> => {
+    const res = await client.post(`/meal-suggest`, data);
     return res.data;
   }
+
 };

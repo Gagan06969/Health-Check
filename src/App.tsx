@@ -1,292 +1,378 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { 
+  Activity, 
+  Flame, 
+  Plus, 
+  Target,
+  Settings,
+  Sparkles,
+  LogOut
+} from 'lucide-react';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  Tooltip, 
+  ResponsiveContainer,
+} from 'recharts';
 import { format } from 'date-fns';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { Settings, Plus, Activity, HeartPulse, Target, Flame, PieChart, Sparkles } from 'lucide-react';
+import { api } from './utils/api';
 import { ProfileModal } from './components/ProfileModal';
 import { LogModal } from './components/LogModal';
 import { Chatbot } from './components/Chatbot';
-import { api } from './utils/api';
+import { Login } from './components/Login';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import type { User, DailyLog } from './types';
+import './App.css';
 
-function App() {
-  const [user, setUser] = useState<any>(null);
-  const [todayLog, setTodayLog] = useState<any>(null);
-  const [weeklyData, setWeeklyData] = useState<any[]>([]);
+function Dashboard() {
+  const { logout, userId } = useAuth();
+  const [user, setUser] = useState<User | null>(null);
+  const [todayLog, setTodayLog] = useState<DailyLog | null>(null);
+  const [weeklyData, setWeeklyData] = useState<DailyLog[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showLogModal, setShowLogModal] = useState(false);
   
   const [isSuggesting, setIsSuggesting] = useState<string | null>(null);
-  const [suggestedMeal, setSuggestedMeal] = useState<{meal: string, text: string} | null>(null);
+  const [suggestedMeal, setSuggestedMeal] = useState<{ meal: string; text: string } | null>(null);
   const [ingredientInputs, setIngredientInputs] = useState<Record<string, string>>({});
-  
+
   const todayDate = format(new Date(), 'yyyy-MM-dd');
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
+    setIsLoading(true);
     try {
       const userData = await api.getUser();
       setUser(userData);
       
-      const logData = await api.getLog(todayDate);
-      setTodayLog(logData);
-      
-      const weekData = await api.getWeekly();
-      setWeeklyData(weekData);
+      const [logsData, currentLog] = await Promise.all([
+        api.getWeekly(),
+        api.getLog(todayDate)
+      ]);
+      setWeeklyData(logsData);
+      setTodayLog(currentLog);
+
+      // If no profile exists yet, force open Profile Modal
+      if (!userData) {
+        setShowProfileModal(true);
+      }
     } catch (err) {
-      console.error('Failed to fetch data', err);
+      console.error(err);
     }
-  };
+    setIsLoading(false);
+  }, [todayDate]);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
 
-  const handleProfileSave = async (data: any) => {
+  /* ================= SAVE PROFILE ================= */
+
+  const handleProfileSave = async (data: Partial<User>) => {
     await api.updateUser(data);
     setShowProfileModal(false);
-    fetchData(); // Refresh data
+    fetchData();
   };
 
-  const handleLogSave = async (data: any) => {
+  /* ================= SAVE LOG ================= */
+
+  const handleLogSave = async (data: DailyLog) => {
     await api.saveLog(data);
     setShowLogModal(false);
-    fetchData(); // Refresh data
+    fetchData();
   };
 
-  const handleSuggestMeal = async (mealName: string, cals: number) => {
+  /* ================= AI MEAL SUGGESTION ================= */
+
+  const handleSuggestMeal = async (mealName: string, calories: number) => {
     if (!user) return;
-    
-    // Read from inline input state instead of window.prompt
     const ingredients = ingredientInputs[mealName] || "";
-    
     setIsSuggesting(mealName);
+
     try {
-      const data = await api.suggestMeal({ mealName, targetCalories: cals, dietPreference: user.dietPreference, ingredients: ingredients.trim() });
-      setSuggestedMeal({ meal: mealName, text: data.suggestion });
-      // clear input after success
-      setIngredientInputs(prev => ({...prev, [mealName]: ''}));
-    } catch (err) {
-      alert("Failed to get suggestion. Check backend connection or AI key.");
+      const data = await api.suggestMeal({
+        mealName,
+        targetCalories: calories,
+        dietPreference: user.dietPreference,
+        ingredients
+      });
+
+      setSuggestedMeal({
+        meal: mealName,
+        text: data.suggestion
+      });
+
+      setIngredientInputs(prev => ({
+        ...prev,
+        [mealName]: ""
+      }));
+    } catch {
+      alert("AI suggestion failed");
     }
     setIsSuggesting(null);
   };
 
-  if (!user || !todayLog) {
+  if (isLoading) {
     return (
-      <div className="flex-center" style={{ minHeight: '100vh' }}>
-        <div className="brand" style={{ animation: 'fadeIn 1s infinite alternate' }}>Loading...</div>
+      <div className="loading-screen">
+        <div className="spinner"></div>
+        <p>Loading your health dashboard...</p>
       </div>
     );
   }
 
-  // Derived metrics
-  const bmr = user.bmr || 0;
-  const activeCalories = todayLog.caloriesBurned || 0;
-  const tdee = bmr + activeCalories;
-  
-  const calorieDeficit = tdee - (todayLog.caloriesConsumed || 0);
-  
-  // Progress calculations
-  const goalCals = user.dailyGoalCalories || 2000;
-  const progressRatio = Math.min((todayLog.caloriesConsumed / goalCals) * 100, 100);
+  // Fallback for missing user profile (show onboarding)
+  if (!user && !showProfileModal) {
+     return (
+       <div className="loading-screen">
+         <button className="btn primary-btn" onClick={() => setShowProfileModal(true)}>
+           Initialize My Profile
+         </button>
+       </div>
+     );
+  }
 
-  // Meal planning (30% / 40% / 30%)
-  const morningCals = Math.round(goalCals * 0.3);
-  const afternoonCals = Math.round(goalCals * 0.4);
-  const nightCals = Math.round(goalCals * 0.3);
+  /* ================= CALCULATIONS ================= */
 
-  // Dynamic Step Goal & Burn Targets
-  const baseStepGoal = user.stepGoal || 10000;
-  const calorieDifference = (todayLog.caloriesConsumed || 0) - goalCals;
-  const dynamicStepGoal = Math.max(0, Math.ceil(baseStepGoal + (calorieDifference / 0.04)));
+  const goalCals = user?.dailyGoalCalories || 2000;
+  const consumed = todayLog?.caloriesConsumed || 0;
+  const burned = todayLog?.caloriesBurned || 0;
+  const remaining = goalCals - consumed;
 
-  const excessCals = calorieDifference;
-  const targetSteps = excessCals > 0 ? Math.ceil(excessCals / 0.04) : 0;
-  const targetPushups = excessCals > 0 ? Math.ceil(excessCals / 0.3) : 0;
+  const mealTargets: Record<string, number> = {
+    Morning: Math.round(goalCals * 0.3),
+    Afternoon: Math.round(goalCals * 0.4),
+    Night: Math.round(goalCals * 0.3)
+  };
 
   return (
     <div className="app-container">
-      <header>
-        <div className="brand">
-          <HeartPulse size={32} color="var(--primary-glow)" /> HealthTracker
+      {/* HEADER */}
+      <header className="app-header">
+        <div className="header-title">
+          <div className="logo-icon"><Activity size={24} /></div>
+          <div>
+            <h1>Health Tracker</h1>
+            <p>User ID: {userId} • Happy tracking! 👋</p>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <button className="btn-icon" onClick={() => setShowProfileModal(true)}>
-            <Settings size={20} />
+
+        <div className="header-actions">
+          <button className="btn glass-btn" onClick={() => setShowProfileModal(true)} title="Profile Settings">
+            <Settings size={18} />
           </button>
-          <button className="btn-primary" onClick={() => setShowLogModal(true)}>
-            <Plus size={20} /> Log Activity
+
+          <button className="btn primary-btn" onClick={() => setShowLogModal(true)}>
+            <Plus size={18} />
+            <span>Log</span>
+          </button>
+
+          <button className="btn glass-btn logout-btn" onClick={logout} title="Logout">
+            <LogOut size={18} />
           </button>
         </div>
       </header>
 
+      {/* DASHBOARD */}
       <div className="dashboard-grid">
-        {/* Main Stat Card - Caloric Balance */}
-        <div className="glass-panel" style={{ gridColumn: '1 / -1', background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(99, 102, 241, 0.1))' }}>
-          <div className="flex-between">
+        <div className="card glass main-stat">
+          <div className="stat-header">
+            <h2>Calories Today</h2>
+            <div className="status-badge">{remaining > 0 ? "On Track" : "Goal Met"}</div>
+          </div>
+
+          <div className="calorie-display">
+            <div className="main-number">
+              <h3>{consumed}</h3>
+              <span>kcal consumed</span>
+            </div>
+            
+            <div className="progress-bar-container">
+               <div 
+                 className="progress-bar" 
+                 style={{ width: `${Math.min((consumed / goalCals) * 100, 100)}%` }}
+               ></div>
+            </div>
+
+            <div className="calorie-sub-stats">
+              <div className="sub-stat">
+                <span className="label">Daily Goal</span>
+                <span className="val">{goalCals}</span>
+              </div>
+              <div className="sub-stat">
+                <span className="label">Remaining</span>
+                <span className={`val ${remaining < 0 ? 'negative' : ''}`}>{remaining}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="stats-cards">
+          <div className="card glass mini-card">
+            <div className="icon-box blue"><Activity size={20} /></div>
             <div>
-              <div className="stat-header">Current Weight</div>
-              <div className="stat-value">{user.weight}<span>kg</span></div>
-              <div style={{ marginTop: '8px', color: 'var(--text-muted)' }}>
-                Target: {user.targetWeight}kg 
-                {user.weight > user.targetWeight ? (
-                  <span className="text-emerald" style={{ marginLeft: '8px' }}>Keep going!</span>
-                ) : (
-                  <span className="text-indigo" style={{ marginLeft: '8px' }}>Goal reached!</span>
+              <h3>{todayLog?.stepsWalked || 0}</h3>
+              <p>Steps Walked</p>
+            </div>
+            <div className="mini-progress">
+               <div className="bar" style={{ width: `${Math.min(((todayLog?.stepsWalked || 0) / (user?.stepGoal || 10000)) * 100, 100)}%` }}></div>
+            </div>
+          </div>
+
+          <div className="card glass mini-card">
+            <div className="icon-box purple"><Target size={20} /></div>
+            <div>
+              <h3>{user?.weight || '--'} <small>kg</small></h3>
+              <p>Weight</p>
+            </div>
+          </div>
+
+          <div className="card glass mini-card">
+            <div className="icon-box green"><Flame size={20} /></div>
+            <div>
+              <h3>{burned}</h3>
+              <p>Burned</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* AI MEAL PLANNER */}
+      <div className="meal-section">
+        <div className="section-header">
+          <Sparkles className="sparkle-icon" size={24} />
+          <h2>Smart Meal Planner</h2>
+        </div>
+
+        <div className="meal-grid">
+          {["Morning", "Afternoon", "Night"].map((meal) => {
+            const target = mealTargets[meal];
+            return (
+              <div key={meal} className="card glass meal-card">
+                <div className="meal-header">
+                  <h3>{meal}</h3>
+                  <span className="target-label">{target} kcal goal</span>
+                </div>
+
+                <div className="suggest-input-group">
+                  <input
+                    placeholder="Ingredients..."
+                    value={ingredientInputs[meal] || ""}
+                    onChange={(e) =>
+                      setIngredientInputs(prev => ({
+                        ...prev,
+                        [meal]: e.target.value
+                      }))
+                    }
+                  />
+
+                  <button
+                    className="suggest-btn"
+                    onClick={() => handleSuggestMeal(meal, target)}
+                    disabled={isSuggesting === meal}
+                  >
+                    {isSuggesting === meal ? (
+                       <div className="typing-loader"></div>
+                    ) : (
+                       <Sparkles size={16} />
+                    )}
+                  </button>
+                </div>
+
+                {suggestedMeal?.meal === meal && (
+                  <div className="ai-suggestion-box anime-fade-in">
+                    <p>{suggestedMeal.text}</p>
+                  </div>
                 )}
               </div>
-              {excessCals > 0 && (
-                 <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '8px', fontSize: '0.85rem' }}>
-                    <div style={{ color: '#fca5a5', fontWeight: 'bold', marginBottom: '8px' }}>🔥 Burn Excess Calories (+{excessCals} kcal):</div>
-                    <ul style={{ margin: 0, paddingLeft: '20px', color: 'white' }}>
-                      <li>Walk <strong>~{targetSteps.toLocaleString()} steps</strong></li>
-                      <li style={{ color: 'var(--text-muted)', listStyle: 'none', marginLeft: '-20px', margin: '4px 0' }}>OR</li>
-                      <li>Do <strong>~{targetPushups} Pushups</strong></li>
-                    </ul>
-                 </div>
-              )}
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <div className="stat-header" style={{ justifyContent: 'flex-end' }}>Calories Consumed vs Goal</div>
-              <div className="stat-value">
-                {todayLog.caloriesConsumed} <span style={{ fontSize: '1.5rem', opacity: 0.5 }}>/ {goalCals}</span>
-              </div>
-              <div style={{ width: '200px', height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', marginTop: '12px', overflow: 'hidden' }}>
-                <div style={{ width: `${progressRatio}%`, height: '100%', background: 'linear-gradient(90deg, var(--primary-glow), var(--secondary-glow))', borderRadius: '4px', transition: 'width 1s ease-out' }}></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Metric Cards */}
-        <div className="glass-panel stat-card">
-          <div className="stat-header"><Activity size={18} /> Steps Walked</div>
-          <div className="stat-value">
-            {todayLog.stepsWalked.toLocaleString()}
-            <span style={{ fontSize: '1rem', opacity: 0.5, marginLeft: '4px' }}>/ {dynamicStepGoal.toLocaleString()}</span>
-          </div>
-          <div style={{ color: 'var(--secondary-glow)', fontSize: '0.9rem', marginTop: 'auto' }}>
-            Target dynamically adjusted!
-          </div>
-        </div>
-
-        <div className="glass-panel stat-card">
-          <div className="stat-header"><Target size={18} /> TDEE (Estimated)</div>
-          <div className="stat-value">{tdee}<span>kcal</span></div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: 'auto' }}>
-            Base BMR: {bmr} + Activity
-          </div>
-        </div>
-
-        <div className="glass-panel stat-card">
-          <div className="stat-header"><Flame size={18} /> Caloric Deficit</div>
-          <div className="stat-value text-emerald">
-            {calorieDeficit > 0 ? `-${calorieDeficit}` : `+${Math.abs(calorieDeficit)}`}<span>kcal</span>
-          </div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: 'auto' }}>
-            {calorieDeficit > 500 ? 'Great deficit for weight loss!' : 
-             calorieDeficit > 0 ? 'Slight deficit.' : 'You are in a caloric surplus.'}
-          </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* Meal Targets (New Feature) */}
-      <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '16px 0 -8px 0', fontSize: '1.2rem' }}>
-        <PieChart size={20} className="text-purple" /> Recommended Macro Split (Meals)
-      </h3>
-      <div className="dashboard-grid">
-        <div className="glass-panel stat-card" style={{ background: 'linear-gradient(135deg, rgba(253, 186, 116, 0.1), rgba(0,0,0,0.3))', borderColor: 'rgba(253, 186, 116, 0.2)', display: 'flex', flexDirection: 'column' }}>
-          <div className="stat-header" style={{ color: '#fdba74', justifyContent: 'space-between' }}>
-            Morning In (30%)
-            <button className="btn-icon" onClick={() => handleSuggestMeal('Morning', morningCals)} style={{ color: '#fdba74', padding: '4px', background: 'rgba(253, 186, 116, 0.1)' }} disabled={isSuggesting === 'Morning'}>
-              <Sparkles size={16} className={isSuggesting === 'Morning' ? 'spin-anim' : ''} />
-            </button>
-          </div>
-          <div className="stat-value">{morningCals}<span>kcal</span></div>
-          <input 
-            type="text" 
-            placeholder="Any ingredients? (e.g. Oats)" 
-            className="glass-input" 
-            style={{ fontSize: '0.85rem', padding: '8px 12px', marginTop: '8px', background: 'rgba(255,255,255,0.05)' }} 
-            value={ingredientInputs['Morning'] || ''}
-            onChange={(e) => setIngredientInputs(prev => ({...prev, Morning: e.target.value}))}
-          />
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto', paddingTop: '8px' }}>
-            {suggestedMeal?.meal === 'Morning' ? <div style={{color: 'white', marginTop: '8px', lineHeight: '1.3'}}>{suggestedMeal.text}</div> : 'Ideal for breakfast (e.g., Poha, Oats)'}
-          </div>
-        </div>
-        
-        <div className="glass-panel stat-card" style={{ background: 'linear-gradient(135deg, rgba(252, 211, 77, 0.1), rgba(0,0,0,0.3))', borderColor: 'rgba(252, 211, 77, 0.2)', display: 'flex', flexDirection: 'column' }}>
-          <div className="stat-header" style={{ color: '#fcd34d', justifyContent: 'space-between' }}>
-            Afternoon (40%)
-            <button className="btn-icon" onClick={() => handleSuggestMeal('Afternoon', afternoonCals)} style={{ color: '#fcd34d', padding: '4px', background: 'rgba(252, 211, 77, 0.1)' }} disabled={isSuggesting === 'Afternoon'}>
-              <Sparkles size={16} className={isSuggesting === 'Afternoon' ? 'spin-anim' : ''} />
-            </button>
-          </div>
-          <div className="stat-value">{afternoonCals}<span>kcal</span></div>
-          <input 
-            type="text" 
-            placeholder="Any ingredients? (e.g. Rice, Dal)" 
-            className="glass-input" 
-            style={{ fontSize: '0.85rem', padding: '8px 12px', marginTop: '8px', background: 'rgba(255,255,255,0.05)' }} 
-            value={ingredientInputs['Afternoon'] || ''}
-            onChange={(e) => setIngredientInputs(prev => ({...prev, Afternoon: e.target.value}))}
-          />
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto', paddingTop: '8px' }}>
-            {suggestedMeal?.meal === 'Afternoon' ? <div style={{color: 'white', marginTop: '8px', lineHeight: '1.3'}}>{suggestedMeal.text}</div> : 'Heaviest meal (e.g., Dal, Roti, Rice)'}
+      {/* WEEKLY CHART */}
+      <div className="card glass chart-card">
+        <div className="chart-header">
+          <h2>Weekly Progress</h2>
+          <div className="chart-legend">
+             <span className="dot consumed"></span> Consumed
+             <span className="dot burned"></span> Burned
           </div>
         </div>
 
-        <div className="glass-panel stat-card" style={{ background: 'linear-gradient(135deg, rgba(167, 139, 250, 0.1), rgba(0,0,0,0.3))', borderColor: 'rgba(167, 139, 250, 0.2)', display: 'flex', flexDirection: 'column' }}>
-          <div className="stat-header" style={{ color: '#a78bfa', justifyContent: 'space-between' }}>
-            Night In (30%)
-            <button className="btn-icon" onClick={() => handleSuggestMeal('Night', nightCals)} style={{ color: '#a78bfa', padding: '4px', background: 'rgba(167, 139, 250, 0.1)' }} disabled={isSuggesting === 'Night'}>
-              <Sparkles size={16} className={isSuggesting === 'Night' ? 'spin-anim' : ''} />
-            </button>
-          </div>
-          <div className="stat-value">{nightCals}<span>kcal</span></div>
-          <input 
-            type="text" 
-            placeholder="Any ingredients? (e.g. Paneer)" 
-            className="glass-input" 
-            style={{ fontSize: '0.85rem', padding: '8px 12px', marginTop: '8px', background: 'rgba(255,255,255,0.05)' }} 
-            value={ingredientInputs['Night'] || ''}
-            onChange={(e) => setIngredientInputs(prev => ({...prev, Night: e.target.value}))}
-          />
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto', paddingTop: '8px' }}>
-            {suggestedMeal?.meal === 'Night' ? <div style={{color: 'white', marginTop: '8px', lineHeight: '1.3'}}>{suggestedMeal.text}</div> : 'Lighter dinner (e.g., Paneer, Salad)'}
-          </div>
+        <div className="chart-wrapper">
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={weeklyData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <XAxis 
+                dataKey="date" 
+                axisLine={false} 
+                tickLine={false} 
+                tick={{ fill: '#94a3b8', fontSize: 12 }}
+                tickFormatter={(str) => format(new Date(str), 'EEE')}
+              />
+              <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
+              <Tooltip 
+                cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                contentStyle={{ 
+                  background: '#1e293b', 
+                  border: '1px solid #334155', 
+                  borderRadius: '12px',
+                  boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' 
+                }}
+              />
+              <Bar dataKey="caloriesConsumed" fill="url(#colorConsumed)" radius={[4, 4, 0, 0]} barSize={30} />
+              <Bar dataKey="caloriesBurned" fill="url(#colorBurned)" radius={[4, 4, 0, 0]} barSize={30} />
+              <defs>
+                <linearGradient id="colorConsumed" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.8}/>
+                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0.2}/>
+                </linearGradient>
+                <linearGradient id="colorBurned" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.8}/>
+                  <stop offset="95%" stopColor="#10b981" stopOpacity={0.2}/>
+                </linearGradient>
+              </defs>
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Weekly Charts */}
-      {weeklyData.length > 0 && (
-        <div className="dashboard-grid" style={{ marginTop: '16px' }}>
-          <div className="glass-panel" style={{ height: '350px' }}>
-            <h3 style={{ marginBottom: '24px' }}>Weekly Calories Consumed vs Burned (TDEE)</h3>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={weeklyData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <XAxis dataKey="date" stroke="var(--text-muted)" fontSize={12} tickFormatter={(val) => val.slice(5)} />
-                <YAxis stroke="var(--text-muted)" fontSize={12} />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: 'var(--glass-bg)', borderColor: 'var(--glass-border)', color: '#fff', borderRadius: '8px' }}
-                  itemStyle={{ color: '#fff' }}
-                />
-                <Bar dataKey="caloriesConsumed" name="Consumed" fill="var(--secondary-glow)" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="caloriesBurned" name="Active Burned" fill="var(--accent-color)" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+      <Chatbot />
+
+      {showProfileModal && (
+        <ProfileModal
+          user={user || { id: 0, weight: 70, targetWeight: 65, height: 175, age: 25, gender: 'Male', bmr: 0, dailyGoalCalories: 0, dietPreference: 'Both', stepGoal: 10000 }}
+          onClose={() => user && setShowProfileModal(false)}
+          onSave={handleProfileSave}
+        />
       )}
 
-      {/* Modals */}
-      {showProfileModal && <ProfileModal user={user} onClose={() => setShowProfileModal(false)} onSave={handleProfileSave} />}
-      {showLogModal && <LogModal currentLog={todayLog} date={todayDate} onClose={() => setShowLogModal(false)} onSave={handleLogSave} />}
-    
-      {/* AI Chatbot */}
-      <Chatbot />
+      {showLogModal && todayLog && (
+        <LogModal
+          currentLog={todayLog}
+          date={todayDate}
+          onClose={() => setShowLogModal(false)}
+          onSave={handleLogSave}
+        />
+      )}
     </div>
   );
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AuthWrapper />
+    </AuthProvider>
+  );
+}
+
+function AuthWrapper() {
+  const { isAuthenticated } = useAuth();
+  return isAuthenticated ? <Dashboard /> : <Login />;
 }
 
 export default App;

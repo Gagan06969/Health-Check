@@ -4,18 +4,45 @@ const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const axios = require('axios');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const aiModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
+const aiModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3004;
 
-// Middleware
+console.log(`Starting server on port ${PORT}...`);
+app.listen(PORT, () => {
+  console.log(`[SERVER] Ready on port ${PORT}`);
+});
+
+
+
+// Nodemailer Transporter
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
+});
+
 app.use(cors());
 app.use(express.json());
+app.use((req, res, next) => {
+  console.log(`[REQUEST] ${req.method} ${req.url}`);
+  next();
+});
+
+
+
+// Helper: Hashing
+const hashEmail = (email) => {
+  return crypto.createHash('sha256').update(email.toLowerCase().trim()).digest('hex');
+};
 
 // Database setup
 const dbPath = path.resolve(__dirname, 'database.sqlite');
@@ -27,9 +54,23 @@ const db = new sqlite3.Database(dbPath, (err) => {
     
     // Create tables
     db.serialize(() => {
-      // User table
-      db.run(`CREATE TABLE IF NOT EXISTS user (
+      // Core Users table (Hashed email addresses)
+      db.run(`CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email_hash TEXT UNIQUE NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`);
+
+      // OTP storage
+      db.run(`CREATE TABLE IF NOT EXISTS otps (
+        email_hash TEXT PRIMARY KEY,
+        otp TEXT NOT NULL,
+        expires_at DATETIME NOT NULL
+      )`);
+
+      // Profile table (renamed from user for clarity)
+      db.run(`CREATE TABLE IF NOT EXISTS user_profiles (
+        user_id INTEGER PRIMARY KEY,
         weight REAL,
         targetWeight REAL,
         height REAL,
@@ -38,273 +79,369 @@ const db = new sqlite3.Database(dbPath, (err) => {
         bmr REAL,
         dailyGoalCalories INTEGER,
         dietPreference TEXT DEFAULT 'Both',
-        stepGoal INTEGER DEFAULT 10000
+        stepGoal INTEGER DEFAULT 10000,
+        FOREIGN KEY(user_id) REFERENCES users(id)
       )`);
 
-      // Initialize default user if not exists
-      db.get('SELECT * FROM user WHERE id = 1', (err, row) => {
-        if (!row) {
-          db.run(`INSERT INTO user (weight, targetWeight, height, age, gender, bmr, dailyGoalCalories)
-                  VALUES (70, 65, 175, 25, 'Male', 1700, 2200)`);
-        }
-      });
-
-      // DailyLog table
+      // DailyLog table (added user_id)
       db.run(`CREATE TABLE IF NOT EXISTS daily_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT UNIQUE,
+        user_id INTEGER,
+        date TEXT,
         caloriesConsumed INTEGER DEFAULT 0,
         stepsWalked INTEGER DEFAULT 0,
         caloriesBurned INTEGER DEFAULT 0,
         foods TEXT DEFAULT '[]',
-        exercises TEXT DEFAULT '[]'
+        exercises TEXT DEFAULT '[]',
+        UNIQUE(user_id, date),
+        FOREIGN KEY(user_id) REFERENCES users(id)
       )`);
       
-      // Try to add new columns if upgrading from v1
-      db.run(`ALTER TABLE daily_log ADD COLUMN foods TEXT DEFAULT '[]'`, (err) => { /* ignore if exists */ });
-      db.run(`ALTER TABLE daily_log ADD COLUMN exercises TEXT DEFAULT '[]'`, (err) => { /* ignore if exists */ });
-      db.run(`ALTER TABLE user ADD COLUMN dietPreference TEXT DEFAULT 'Both'`, (err) => { /* ignore */ });
-      db.run(`ALTER TABLE user ADD COLUMN stepGoal INTEGER DEFAULT 10000`, (err) => { /* ignore */ });
-
-      // CustomFood table
+      // CustomFood table (added user_id)
       db.run(`CREATE TABLE IF NOT EXISTS custom_food (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE,
+        user_id INTEGER,
+        name TEXT,
         calories_per_serving INTEGER,
-        serving_unit TEXT
+        serving_unit TEXT,
+        UNIQUE(user_id, name),
+        FOREIGN KEY(user_id) REFERENCES users(id)
       )`);
+
+      // Migration/Safety: Add columns if they don't exist
+      db.run(`ALTER TABLE daily_log ADD COLUMN user_id INTEGER`, (err) => {});
+      db.run(`ALTER TABLE custom_food ADD COLUMN user_id INTEGER`, (err) => {});
+      
+      // Cleanup: If old 'user' table exists, migrate data for first user or just drop
+      // For this session, we'll assume a fresh start or simple migration
     });
   }
 });
 
-// Calculate metrics helper
-const calculateTDEE = (bmr, stepsWalked) => {
-    // Basic estimation: 1 step = ~0.04 calories burned above BMR
-    const activeCalories = stepsWalked * 0.04;
-    return Math.round(bmr + activeCalories);
+console.log('DB setup initiated. Moving to route registration...');
+
+console.log('Trace: Loading requireAuth...');
+const requireAuth = (req, res, next) => {
+  const userId = req.headers['x-user-id'];
+  if (!userId) return res.status(401).json({ error: 'Unauthorized: No user_id provided' });
+  req.userId = parseInt(userId);
+  next();
 };
 
-// Routes
+console.log('Trace: Registering Auth routes...');
+app.post('/api/auth/send-otp', (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email address required' });
 
-// Get User Profile
-app.get('/api/user', (req, res) => {
-  db.get('SELECT * FROM user WHERE id = 1', (err, row) => {
-    if (err) res.status(500).json({ error: err.message });
-    else res.json(row);
+  const emailHash = hashEmail(email);
+  const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digit OTP
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 min expiry
+
+  db.run(`INSERT INTO otps (email_hash, otp, expires_at) VALUES (?, ?, ?) 
+          ON CONFLICT(email_hash) DO UPDATE SET otp = excluded.otp, expires_at = excluded.expires_at`, 
+    [emailHash, otp, expiresAt], async (err) => {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      try {
+        const mailOptions = {
+          from: process.env.EMAIL_USER,
+          to: email,
+          subject: 'Your Health Tracker OTP',
+          html: `
+            <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
+              <h2 style="color: #4CAF50;">Health Tracker</h2>
+              <p>Hello,</p>
+              <p>Your verification code is: <strong style="font-size: 24px; color: #333;">${otp}</strong></p>
+              <p>This code will expire in 5 minutes.</p>
+              <p>If you didn't request this, please ignore this email.</p>
+            </div>
+          `
+        };
+
+        await transporter.sendMail(mailOptions);
+        console.log(`[AUTH] OTP sent to ${email} (${emailHash.substring(0,8)}...)`);
+        res.json({ success: true, message: 'OTP sent successfully to your email' });
+      } catch (mailErr) {
+        console.error('Error sending email:', mailErr);
+        // Fallback: still show in console for dev
+        console.log(`[AUTH-FALLBACK] OTP for ${email}: ${otp}`);
+        res.status(500).json({ error: 'Failed to send verification email. Please try again.' });
+      }
   });
 });
 
-// Update User Profile
-app.put('/api/user', (req, res) => {
-  const { weight, targetWeight, height, age, gender, dietPreference, stepGoal } = req.body;
-  
-  // Calculate BMR (Mifflin-St Jeor Equation)
-  let bmr = 0;
-  if (gender === 'Male') {
-    bmr = (10 * weight) + (6.25 * height) - (5 * age) + 5;
-  } else {
-    bmr = (10 * weight) + (6.25 * height) - (5 * age) - 161;
-  }
-  
-  // Base daily goal for weight loss (0.5kg/week = ~500 cal deficit)
-  // Or maintenance if weight <= targetWeight
-  let dailyGoalCalories = bmr * 1.2; // Sedentary TDEE approx
-  if (weight > targetWeight) {
-    dailyGoalCalories -= 500; // Deficit
-  }
-  
-  bmr = Math.round(bmr);
-  dailyGoalCalories = Math.round(dailyGoalCalories);
-  
-  const dietPref = dietPreference || 'Both';
-  const sGoal = stepGoal || 10000;
 
-  const stmt = `UPDATE user SET weight = ?, targetWeight = ?, height = ?, age = ?, gender = ?, bmr = ?, dailyGoalCalories = ?, dietPreference = ?, stepGoal = ? WHERE id = 1`;
-  db.run(stmt, [weight, targetWeight, height, age, gender, bmr, dailyGoalCalories, dietPref, sGoal], function(err) {
+app.get('/api/user', requireAuth, (req, res) => {
+  db.get('SELECT * FROM user_profiles WHERE user_id = ?', [req.userId], (err, row) => {
     if (err) res.status(500).json({ error: err.message });
-    else res.json({ success: true, bmr, dailyGoalCalories, dietPreference: dietPref, stepGoal: sGoal });
+    else res.json(row || null); // Return null if no profile yet
   });
 });
 
-// Get today's log or specific date
-app.get('/api/logs/:date', (req, res) => {
+
+app.get('/api/logs/:date', requireAuth, (req, res) => {
   const { date } = req.params;
-  db.get('SELECT * FROM daily_log WHERE date = ?', [date], (err, row) => {
+  db.get('SELECT * FROM daily_log WHERE user_id = ? AND date = ?', [req.userId, date], (err, row) => {
     if (err) res.status(500).json({ error: err.message });
     else if (!row) {
-        // Return mostly empty if not exists
-        res.json({ date, caloriesConsumed: 0, stepsWalked: 0, caloriesBurned: 0, foods: '[]', exercises: '[]' });
+        res.json({ date, user_id: req.userId, caloriesConsumed: 0, stepsWalked: 0, caloriesBurned: 0, foods: '[]', exercises: '[]' });
     } else res.json(row);
   });
 });
 
-// Set/Update today's log (upsert)
-app.post('/api/logs', (req, res) => {
-  const { date, caloriesConsumed, stepsWalked, caloriesBurned, foods, exercises } = req.body;
+
+app.get('/api/food/search', requireAuth, async (req, res) => {
+  const { query } = req.query;
+  if (!query) return res.status(400).json({ error: 'Query parameter required' });
   
-  // Calculate default step calories if not explicitly provided
-  const stepsCals = Math.round(stepsWalked * 0.04);
-  const totalBurned = caloriesBurned || stepsCals; // Use provided burned calories (which includes exercises) or fallback
+  const customQuery = `%${query}%`;
+  db.all(`SELECT * FROM custom_food WHERE user_id = ? AND name LIKE ? LIMIT 5`, [req.userId, customQuery], async (err, customRows) => {
+    let results = (customRows || []).map(row => ({
+      id: `custom_${row.id}`,
+      name: row.name,
+      brand: 'Custom',
+      calories_per_100g: row.calories_per_serving,
+      unit: row.serving_unit,
+      image: null
+    }));
+
+    try {
+      const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=10`;
+      const response = await axios.get(url);
+      if (response.data?.products) {
+        const items = response.data.products
+          .filter(p => p.nutriments?.['energy-kcal_100g'])
+          .map(p => ({
+            id: p._id,
+            name: p.product_name || p.generic_name,
+            brand: p.brands?.split(',')[0] || 'Generic',
+            calories_per_100g: p.nutriments['energy-kcal_100g'],
+            unit: '100g',
+            image: p.image_front_thumb_url
+          }));
+        results = [...results, ...items].slice(0, 10);
+      }
+      res.json({ results });
+    } catch (err) {
+      res.json({ results });
+    }
+  });
+});
+
+
+
+// 2. Verify OTP
+app.post('/api/auth/verify-otp', (req, res) => {
+  const { email, otp } = req.body;
+  if (!email || !otp) return res.status(400).json({ error: 'Email and OTP required' });
+
+  const emailHash = hashEmail(email);
+
+  db.get(`SELECT * FROM otps WHERE email_hash = ?`, [emailHash], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row || row.otp !== otp || new Date() > new Date(row.expires_at)) {
+      return res.status(400).json({ error: 'Invalid or expired OTP' });
+    }
+
+    // OTP Valid - Get or Create User
+    db.serialize(() => {
+      db.run(`INSERT OR IGNORE INTO users (email_hash) VALUES (?)`, [emailHash]);
+      db.get(`SELECT id FROM users WHERE email_hash = ?`, [emailHash], (err, user) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        // Clean up OTP
+        db.run(`DELETE FROM otps WHERE email_hash = ?`, [emailHash]);
+        
+        // Check if profile exists
+        db.get(`SELECT * FROM user_profiles WHERE user_id = ?`, [user.id], (err, profile) => {
+          res.json({ 
+            success: true, 
+            userId: user.id, 
+            hasProfile: !!profile 
+          });
+        });
+      });
+    });
+  });
+});
+
+// --- PROTECTED ROUTES ---
+
+// Get User Profile
+app.get('/api/user', requireAuth, (req, res) => {
+  db.get('SELECT * FROM user_profiles WHERE user_id = ?', [req.userId], (err, row) => {
+    if (err) res.status(500).json({ error: err.message });
+    else res.json(row || null); // Return null if no profile yet
+  });
+});
+
+// Update User Profile
+app.put('/api/user', requireAuth, (req, res) => {
+  const { weight, targetWeight, height, age, gender, dietPreference, stepGoal } = req.body;
+  
+  let bmr = (gender === 'Male') 
+    ? (10 * weight) + (6.25 * height) - (5 * age) + 5
+    : (10 * weight) + (6.25 * height) - (5 * age) - 161;
+  
+  let dailyGoalCalories = (weight > targetWeight) ? (bmr * 1.2) - 500 : (bmr * 1.2);
+  
+  bmr = Math.round(bmr);
+  dailyGoalCalories = Math.round(dailyGoalCalories);
+  
+  const stmt = `
+    INSERT INTO user_profiles (user_id, weight, targetWeight, height, age, gender, bmr, dailyGoalCalories, dietPreference, stepGoal)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      weight = excluded.weight,
+      targetWeight = excluded.targetWeight,
+      height = excluded.height,
+      age = excluded.age,
+      gender = excluded.gender,
+      bmr = excluded.bmr,
+      dailyGoalCalories = excluded.dailyGoalCalories,
+      dietPreference = excluded.dietPreference,
+      stepGoal = excluded.stepGoal
+  `;
+  
+  db.run(stmt, [req.userId, weight, targetWeight, height, age, gender, bmr, dailyGoalCalories, dietPreference || 'Both', stepGoal || 10000], function(err) {
+    if (err) res.status(500).json({ error: err.message });
+    else res.json({ success: true, bmr, dailyGoalCalories });
+  });
+});
+
+// Get date log
+app.get('/api/logs/:date', requireAuth, (req, res) => {
+  const { date } = req.params;
+  db.get('SELECT * FROM daily_log WHERE user_id = ? AND date = ?', [req.userId, date], (err, row) => {
+    if (err) res.status(500).json({ error: err.message });
+    else if (!row) {
+        res.json({ date, user_id: req.userId, caloriesConsumed: 0, stepsWalked: 0, caloriesBurned: 0, foods: '[]', exercises: '[]' });
+    } else res.json(row);
+  });
+});
+
+// Set/Update log
+app.post('/api/logs', requireAuth, (req, res) => {
+  const { date, caloriesConsumed, stepsWalked, caloriesBurned, foods, exercises } = req.body;
+  const totalBurned = caloriesBurned || Math.round(stepsWalked * 0.04);
   
   const foodsStr = typeof foods === 'string' ? foods : JSON.stringify(foods || []);
   const exercisesStr = typeof exercises === 'string' ? exercises : JSON.stringify(exercises || []);
 
   const stmt = `
-    INSERT INTO daily_log (date, caloriesConsumed, stepsWalked, caloriesBurned, foods, exercises) 
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(date) DO UPDATE SET 
+    INSERT INTO daily_log (user_id, date, caloriesConsumed, stepsWalked, caloriesBurned, foods, exercises) 
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, date) DO UPDATE SET 
       caloriesConsumed = excluded.caloriesConsumed,
       stepsWalked = excluded.stepsWalked,
       caloriesBurned = excluded.caloriesBurned,
       foods = excluded.foods,
       exercises = excluded.exercises
   `;
-  db.run(stmt, [date, caloriesConsumed, stepsWalked, totalBurned, foodsStr, exercisesStr], function(err) {
+  db.run(stmt, [req.userId, date, caloriesConsumed, stepsWalked, totalBurned, foodsStr, exercisesStr], function(err) {
     if (err) res.status(500).json({ error: err.message });
-    else res.json({ success: true, date, caloriesConsumed, stepsWalked, caloriesBurned: totalBurned, foods: foodsStr, exercises: exercisesStr });
+    else res.json({ success: true });
   });
 });
 
-// Search Food via OpenFoodFacts and Local Custom DB
-app.get('/api/food/search', async (req, res) => {
+// Search Food
+app.get('/api/food/search', requireAuth, async (req, res) => {
   const { query } = req.query;
   if (!query) return res.status(400).json({ error: 'Query parameter required' });
   
-  try {
-    // First, search our local CustomFoods DB
-    const customQuery = `%${query}%`;
-    db.all(`SELECT * FROM custom_food WHERE name LIKE ? LIMIT 5`, [customQuery], async (err, customRows) => {
-      let results = [];
-      if (!err && customRows) {
-        results = customRows.map(row => ({
-          id: `custom_${row.id}`,
-          name: row.name,
-          brand: 'Custom',
-          calories_per_100g: row.calories_per_serving, // Abusing this field for simplicity, it means per serving here
-          unit: row.serving_unit, // Ensure we pass the unit to the frontend
-          image: null
-        }));
-      }
+  const customQuery = `%${query}%`;
+  db.all(`SELECT * FROM custom_food WHERE user_id = ? AND name LIKE ? LIMIT 5`, [req.userId, customQuery], async (err, customRows) => {
+    let results = (customRows || []).map(row => ({
+      id: `custom_${row.id}`,
+      name: row.name,
+      brand: 'Custom',
+      calories_per_100g: row.calories_per_serving,
+      unit: row.serving_unit,
+      image: null
+    }));
 
-      // Then fallback to OpenFoodFacts for more
-      try {
-        const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=15&tagtype_0=countries&tag_contains_0=contains&tag_0=india`;
-        const response = await axios.get(url);
-        
-        if (response.data && response.data.products) {
-          let items = response.data.products
-            .filter(p => p.nutriments && p.nutriments['energy-kcal_100g'])
-            .map(p => ({
-              id: p._id || p.id,
-              name: p.product_name || p.generic_name || query,
-              brand: p.brands ? p.brands.split(',')[0] : 'Generic',
-              calories_per_100g: p.nutriments['energy-kcal_100g'],
-              unit: '100g', // Standard API unit
-              image: p.image_front_thumb_url
-            }));
-          
-          items = items.filter((item, index, self) => index === self.findIndex((t) => (t.name === item.name)));
-          
-          // Combine and return top 8
-          res.json({ results: [...results, ...items].slice(0, 8) });
-        } else {
-          res.json({ results });
-        }
-      } catch (externalErr) {
-        // If external API fails (e.g. 504), return at least local results
-        console.error('OpenFoodFacts API error:', externalErr.message);
-        res.json({ results });
+    try {
+      const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=10`;
+      const response = await axios.get(url);
+      if (response.data?.products) {
+        const items = response.data.products
+          .filter(p => p.nutriments?.['energy-kcal_100g'])
+          .map(p => ({
+            id: p._id,
+            name: p.product_name || p.generic_name,
+            brand: p.brands?.split(',')[0] || 'Generic',
+            calories_per_100g: p.nutriments['energy-kcal_100g'],
+            unit: '100g',
+            image: p.image_front_thumb_url
+          }));
+        results = [...results, ...items].slice(0, 10);
       }
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch food details' });
-  }
-});
-
-// Create Custom Food
-app.post('/api/food/custom', (req, res) => {
-  const { name, calories_per_serving, serving_unit } = req.body;
-  if (!name || typeof calories_per_serving !== 'number' || !serving_unit) {
-    return res.status(400).json({ error: 'Missing required custom food fields' });
-  }
-
-  const stmt = `INSERT INTO custom_food (name, calories_per_serving, serving_unit) VALUES (?, ?, ?)`;
-  db.run(stmt, [name, calories_per_serving, serving_unit], function(err) {
-    if (err) {
-      if (err.message.includes('UNIQUE constraint')) {
-        return res.status(400).json({ error: 'Food with this name already exists' });
-      }
-      return res.status(500).json({ error: err.message });
+      res.json({ results });
+    } catch (err) {
+      res.json({ results });
     }
-    res.json({ success: true, id: this.lastID, name, calories_per_serving, serving_unit });
   });
 });
 
-// AI Chatbot Endpoint (Live Gemini Model)
-app.post('/api/chat', async (req, res) => {
+// Create Custom Food
+app.post('/api/food/custom', requireAuth, (req, res) => {
+  const { name, calories_per_serving, serving_unit } = req.body;
+  if (!name || typeof calories_per_serving !== 'number' || !serving_unit) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  const stmt = `INSERT INTO custom_food (user_id, name, calories_per_serving, serving_unit) VALUES (?, ?, ?, ?)`;
+  db.run(stmt, [req.userId, name, calories_per_serving, serving_unit], function(err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ success: true, id: this.lastID });
+  });
+});
+
+
+// AI Chatbot
+app.post('/api/chat', requireAuth, async (req, res) => {
   const { message } = req.body;
   if (!message) return res.status(400).json({ error: 'Message required' });
 
   try {
-    const prompt = `You are a helpful, concise AI Nutritionist for a fitness tracker application. 
-The user is asking: "${message}".
-Please provide a brief (2-3 sentences max) estimation of the calories and nutritional profile of this food item.
-Be encouraging but strictly focused on precise numerical calorie ranges.`;
-
+    const prompt = `You are a helpful AI Nutritionist. User says: "${message}". 
+    Provide a brief, encouraging response (2-3 sentences) focused on their health goals.`;
     const result = await aiModel.generateContent(prompt);
     const response = await result.response;
     res.json({ reply: response.text() });
   } catch (err) {
-    console.error('Gemini API Error details:', err.message);
-    res.status(500).json({ reply: "I'm sorry, I'm having trouble connecting to my brain right now. Try again in a moment!" });
+    res.status(500).json({ reply: "I'm having trouble thinking. Try again later!" });
   }
 });
 
 // AI Smart Meal Suggestion
-app.post('/api/meal-suggest', async (req, res) => {
+app.post('/api/meal-suggest', requireAuth, async (req, res) => {
   const { mealName, targetCalories, dietPreference, ingredients } = req.body;
-  
-  if (!mealName || !targetCalories) return res.status(400).json({ error: 'Meal details required' });
+  if (!mealName || !targetCalories) return res.status(400).json({ error: 'Details required' });
 
   try {
     const dietStr = dietPreference && dietPreference !== 'Both' ? `${dietPreference} (strictly)` : 'Vegetarian or Non-Vegetarian';
-    const ingredientContext = ingredients 
-        ? `The user already has these ingredients/dishes: "${ingredients}". Prioritize using them and specify exact portion sizes (e.g. "1.5 bowls" or "2 rotis") to perfectly balance the calories.` 
-        : `Suggest Indian or common global whole-foods.`;
+    const ingredientContext = ingredients ? `User has: "${ingredients}". Use these.` : `Suggest healthy foods.`;
     
-    const prompt = `You are a personalized nutritionist AI. 
-The user needs a ${mealName} suggestion that totals approximately ${targetCalories} calories.
-Their dietary preference is: ${dietStr}.
-Crucial Rule: ${ingredientContext}
-Provide exactly ONE, highly specific meal combination that totals exactly around ${targetCalories} calories. 
-Format your response concisely: "Just eat [Portion] of [Food A] (X kcal) + [Portion] of [Food B] (Y kcal) to hit your [${targetCalories} kcal] target."
-Do not include conversational filler like "Here is a suggestion". Be direct and bullet-like. Keep it under 2 sentences.`;
+    const prompt = `Suggest a SPECIFIC ${mealName} around ${targetCalories} kcal. 
+    Preference: ${dietStr}. Context: ${ingredientContext}
+    Format: "Eat [Portion] of [Food] (X kcal) to hit your [${targetCalories} kcal] target." 
+    Keep it to 1-2 sentences.`;
 
     const result = await aiModel.generateContent(prompt);
     const response = await result.response;
     res.json({ suggestion: response.text().trim() });
   } catch (err) {
-    console.error('Gemini API Error details:', err.message);
-    res.status(500).json({ suggestion: "Failed to load a unique meal suggestion. Please try again or check your API key." });
+    res.status(500).json({ suggestion: "Failed to load meal suggestion." });
   }
 });
 
-// Get Weekly Analysis data (last 7 days)
-app.get('/api/weekly', (req, res) => {
-  const stmt = `
-    SELECT * FROM daily_log 
-    ORDER BY date DESC 
-    LIMIT 7
-  `;
-  db.all(stmt, [], (err, rows) => {
+// Get Weekly Analysis data
+app.get('/api/weekly', requireAuth, (req, res) => {
+  const stmt = `SELECT * FROM daily_log WHERE user_id = ? ORDER BY date DESC LIMIT 7`;
+  db.all(stmt, [req.userId], (err, rows) => {
     if (err) res.status(500).json({ error: err.message });
-    else {
-        // Reverse to have chronological order for charts
-        res.json(rows.reverse());
-    }
+    else res.json(rows.reverse());
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+
