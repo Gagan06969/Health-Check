@@ -98,6 +98,11 @@ export const api = {
   }): Promise<MealSuggestionResponse> => {
     const res = await client.post(`/meal-suggest`, data);
     return res.data;
+  },
+
+  voiceLog: async (text: string): Promise<{ success: boolean; items: any[] }> => {
+    const res = await client.post(`/logs/voice`, { text });
+    return res.data;
   }
 
 };

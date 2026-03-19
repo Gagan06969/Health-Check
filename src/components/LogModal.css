@@ -84,14 +84,69 @@
   gap: 12px;
 }
 
-.food-search {
+.search-wrap {
+  display: flex;
+  gap: 10px;
   width: 100%;
+}
+
+.food-search {
+  flex: 1;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid var(--border);
   padding: 14px 18px;
   border-radius: 16px;
   color: white;
   outline: none;
+}
+
+.mic-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.mic-btn:hover {
+  background: rgba(99, 102, 241, 0.1);
+  border-color: var(--primary);
+}
+
+.mic-btn.listening {
+  background: #f43f5e;
+  border-color: #f43f5e;
+  color: white;
+  animation: pulse-mic 1.5s infinite;
+}
+
+@keyframes pulse-mic {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.4); }
+  70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(244, 63, 94, 0); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(244, 63, 94, 0); }
+}
+
+.voice-waves {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 24px;
+  width: 24px;
+}
+
+.wave-bar {
+  width: 3px;
+  background: white;
+  border-radius: 10px;
+  transition: height 0.05s ease;
+  min-height: 4px;
 }
 
 .food-row {

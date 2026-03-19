@@ -444,4 +444,29 @@ app.get('/api/weekly', requireAuth, (req, res) => {
   });
 });
 
+// Voice-to-Log AI Parser
+app.post('/api/logs/voice', requireAuth, async (req, res) => {
+  const { text } = req.body;
+  if (!text) return res.status(400).json({ error: 'Text description required' });
+
+  try {
+    const prompt = `You are a nutrition expert. Extract food items and estimated calories from this text: "${text}". 
+    Respond ONLY with a JSON array of objects, with NO markdown formatting or code blocks.
+    Format: [{"name": "Food Name", "calories": number, "quantity": "amount/unit"}].
+    If quantity is unspecified, use "1 serving". Use standard calorie estimates if exact ones aren't given.`;
+
+    const result = await aiModel.generateContent(prompt);
+    const response = await result.response;
+    const textResult = response.text();
+    const jsonMatch = textResult.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) throw new Error('No valid JSON array found in AI response');
+    
+    const parsed = JSON.parse(jsonMatch[0]);
+    res.json({ success: true, items: Array.isArray(parsed) ? parsed : [parsed] });
+  } catch (err) {
+    console.error('AI Voice Log Error:', err);
+    res.status(500).json({ error: 'Failed to process voice log with AI' });
+  }
+});
+
 

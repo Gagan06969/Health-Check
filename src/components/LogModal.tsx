@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { X, Trash2, Plus } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { X, Trash2, Plus, Mic } from "lucide-react";
 import { api } from "../utils/api";
 import type { DailyLog, Food, Exercise, FoodSearchResult } from "../types";
 import "./LogModal.css";
@@ -49,6 +49,104 @@ export const LogModal: React.FC<LogModalProps> = ({
 
   const [customCalories, setCustomCalories] = useState(0);
   const [unit, setUnit] = useState("bowl");
+  const [isListening, setIsListening] = useState(false);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const recognitionRef = useRef<any>(null);
+
+  /* -------- VOICE VISUALIZER -------- */
+
+  useEffect(() => {
+    let audioCtx: AudioContext | null = null;
+    let analyser: AnalyserNode | null = null;
+    let source: MediaStreamAudioSourceNode | null = null;
+    let animationFrame: number;
+    let stream: MediaStream | null = null;
+
+    const updateLevel = () => {
+      if (analyser) {
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(dataArray);
+        const avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+        setAudioLevel(avg);
+        animationFrame = requestAnimationFrame(updateLevel);
+      }
+    };
+
+    if (isListening) {
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(s => {
+          stream = s;
+          audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          analyser = audioCtx.createAnalyser();
+          source = audioCtx.createMediaStreamSource(stream);
+          source.connect(analyser);
+          analyser.fftSize = 64;
+          updateLevel();
+        })
+        .catch(err => console.error("Mic access denied:", err));
+    } else {
+      setAudioLevel(0);
+    }
+
+    return () => {
+      cancelAnimationFrame(animationFrame);
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      if (audioCtx) audioCtx.close();
+    };
+  }, [isListening]);
+
+  /* -------- VOICE LOG -------- */
+
+  const toggleListening = () => {
+    if (isListening && recognitionRef.current) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+      return;
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Speech recognition is not supported in this browser.");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+
+    recognition.onstart = () => setIsListening(true);
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = (err: any) => {
+      console.error("Speech Recognition Error:", err);
+      setIsListening(false);
+    };
+
+    recognition.onresult = async (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      try {
+        setIsListening(false);
+        const data = await api.voiceLog(transcript);
+        if (data.success && data.items) {
+          const newItems: Food[] = data.items.map(item => ({
+            name: item.name,
+            calories: typeof item.calories === 'number' ? item.calories : 0,
+            quantity: item.quantity || "1 serving",
+            mealType: activeMeal
+          }));
+          
+          setFoods(prev => [...prev, ...newItems]);
+          const totalCals = newItems.reduce((sum, item) => sum + item.calories, 0);
+          setCaloriesConsumed(prev => prev + totalCals);
+        }
+      } catch (err) {
+        console.error("Voice Log AI Error:", err);
+        alert("Failed to process voice log. Please try again.");
+      }
+    };
+
+    recognition.start();
+  };
 
   /* -------- FOOD SEARCH -------- */
 
@@ -233,12 +331,33 @@ export const LogModal: React.FC<LogModalProps> = ({
 
         <div className="food-entry">
 
-          <input
-            className="food-search"
-            placeholder={`Search food for ${activeMeal}`}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+          <div className="search-wrap">
+            <input
+              className="food-search"
+              placeholder={`Search food for ${activeMeal}`}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            <button 
+              className={`mic-btn ${isListening ? 'listening' : ''}`}
+              onClick={toggleListening}
+              title={isListening ? "Stop recording" : "Add food by voice"}
+            >
+              {isListening ? (
+                <div className="voice-waves">
+                  {[...Array(5)].map((_, i) => (
+                    <div 
+                      key={i} 
+                      className="wave-bar" 
+                      style={{ height: `${Math.max(4, (audioLevel / 50) * (15 + Math.random() * 20))}px` }}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <Mic size={18} />
+              )}
+            </button>
+          </div>
 
           <div className="food-row">
 
