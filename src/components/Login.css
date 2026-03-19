@@ -154,3 +154,32 @@
 .anime-fade-in {
   animation: anime-fade-in 0.5s ease forwards;
 }
+
+.status-indicator {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  animation: anime-scale-in 0.2s ease-out;
+}
+
+.status-indicator.available {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.status-indicator.taken {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+@keyframes anime-scale-in {
+  from { transform: translateY(-50%) scale(0.5); opacity: 0; }
+  to { transform: translateY(-50%) scale(1); opacity: 1; }
+}

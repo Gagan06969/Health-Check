@@ -1,5 +1,6 @@
 export interface User {
   id: number;
+  username?: string;
   weight: number;
   targetWeight: number;
   height: number;

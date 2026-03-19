@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
@@ -6,11 +6,21 @@ const path = require('path');
 const axios = require('axios');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// Initialize Gemini
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const aiModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+// Initialize Groq Helper
+const groqChat = async (prompt, model = 'llama-3.3-70b-versatile') => {
+  const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+    model,
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.7
+  }, {
+    headers: {
+      'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+      'Content-Type': 'application/json'
+    }
+  });
+  return response.data.choices[0].message.content;
+};
 
 // Initialize Supabase
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -116,7 +126,7 @@ app.post('/api/auth/verify-otp', async (req, res) => {
   const { data: user, error: userError } = await supabase
     .from('users')
     .upsert({ email_hash: emailHash }, { onConflict: 'email_hash' })
-    .select('id')
+    .select('id, username')
     .single();
 
   if (userError) return res.status(500).json({ error: userError.message });
@@ -134,24 +144,81 @@ app.post('/api/auth/verify-otp', async (req, res) => {
   res.json({ 
     success: true, 
     userId: user.id, 
+    username: user.username || null,
+    hasUsername: !!user.username,
     hasProfile: !!profile 
   });
+});
+
+// 3. Check Username Availability
+app.get('/api/auth/check-username', async (req, res) => {
+  const { username } = req.query;
+  if (!username) return res.status(400).json({ error: 'Username required' });
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('id')
+    .ilike('username', username)
+    .maybeSingle();
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ available: !data });
+});
+
+// 4. Set Username
+app.post('/api/auth/set-username', requireAuth, async (req, res) => {
+  const { username } = req.body;
+  if (!username) return res.status(400).json({ error: 'Username required' });
+
+  // Re-check uniqueness just in case
+  const { data: existing } = await supabase
+    .from('users')
+    .select('id')
+    .ilike('username', username)
+    .maybeSingle();
+
+  if (existing) return res.status(400).json({ error: 'Username already taken' });
+
+  const { error } = await supabase
+    .from('users')
+    .update({ username })
+    .eq('id', req.userId);
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
 });
 
 // --- PROTECTED ROUTES ---
 
 // Get User Profile
 app.get('/api/user', requireAuth, async (req, res) => {
-  const { data: profile, error } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from('user_profiles')
     .select('*')
     .eq('user_id', req.userId)
     .single();
 
-  if (error && error.code !== 'PGRST116') {
-    return res.status(500).json({ error: error.message });
-  }
-  res.json(profile || null);
+  const { data: user, error: userError } = await supabase
+    .from('users')
+    .select('username')
+    .eq('id', req.userId)
+    .single();
+
+  if (userError) return res.status(500).json({ error: userError.message });
+
+  res.json({ 
+    user_id: profile?.user_id || req.userId,
+    weight: profile?.weight || null,
+    targetWeight: profile?.target_weight || null,
+    height: profile?.height || null,
+    age: profile?.age || null,
+    gender: profile?.gender || null,
+    bmr: profile?.bmr || null,
+    dailyGoalCalories: profile?.daily_goal_calories || null,
+    dietPreference: profile?.diet_preference || 'Both',
+    stepGoal: profile?.step_goal || 10000,
+    username: user?.username || null
+  });
 });
 
 // Update User Profile
@@ -170,22 +237,26 @@ app.put('/api/user', requireAuth, async (req, res) => {
   const profileData = {
     user_id: req.userId,
     weight,
-    targetWeight,
+    target_weight: targetWeight,
     height,
     age,
     gender,
     bmr,
-    dailyGoalCalories,
-    dietPreference: dietPreference || 'Both',
-    stepGoal: stepGoal || 10000
+    daily_goal_calories: dailyGoalCalories,
+    diet_preference: dietPreference || 'Both',
+    step_goal: stepGoal || 10000
   };
 
   const { error } = await supabase
     .from('user_profiles')
     .upsert(profileData, { onConflict: 'user_id' });
 
-  if (error) res.status(500).json({ error: error.message });
-  else res.json({ success: true, bmr, dailyGoalCalories });
+  if (error) {
+    console.error('Profile Update Error:', error);
+    res.status(500).json({ error: error.message });
+  } else {
+    res.json({ success: true, bmr, dailyGoalCalories });
+  }
 });
 
 // Get date log
@@ -203,10 +274,21 @@ app.get('/api/logs/:date', requireAuth, async (req, res) => {
   }
   
   if (!row) {
-    res.json({ date, user_id: req.userId, caloriesConsumed: 0, stepsWalked: 0, caloriesBurned: 0, foods: [], exercises: [] });
+    res.json({ 
+      date, 
+      user_id: req.userId, 
+      caloriesConsumed: 0, 
+      stepsWalked: 0, 
+      caloriesBurned: 0, 
+      foods: [], 
+      exercises: [] 
+    });
   } else {
     res.json({
       ...row,
+      caloriesConsumed: row.calories_consumed || 0,
+      stepsWalked: row.steps_walked || 0,
+      caloriesBurned: row.calories_burned || 0,
       foods: row.foods || [],
       exercises: row.exercises || []
     });
@@ -221,9 +303,9 @@ app.post('/api/logs', requireAuth, async (req, res) => {
   const logData = {
     user_id: req.userId,
     date,
-    caloriesConsumed,
-    stepsWalked,
-    caloriesBurned: totalBurned,
+    calories_consumed: caloriesConsumed,
+    steps_walked: stepsWalked,
+    calories_burned: totalBurned,
     foods: foods || [],
     exercises: exercises || []
   };
@@ -304,10 +386,10 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   try {
     const prompt = `You are a helpful AI Nutritionist. User says: "${message}". 
     Provide a brief, encouraging response (2-3 sentences) focused on their health goals.`;
-    const result = await aiModel.generateContent(prompt);
-    const response = await result.response;
-    res.json({ reply: response.text() });
+    const reply = await groqChat(prompt);
+    res.json({ reply });
   } catch (err) {
+    console.error('AI Chat Error:', err.response?.data || err.message);
     res.status(500).json({ reply: "I'm having trouble thinking. Try again later!" });
   }
 });
@@ -326,10 +408,10 @@ app.post('/api/meal-suggest', requireAuth, async (req, res) => {
     Format: "Eat [Portion] of [Food] (X kcal) to hit your [${targetCalories} kcal] target." 
     Keep it to 1-2 sentences.`;
 
-    const result = await aiModel.generateContent(prompt);
-    const response = await result.response;
-    res.json({ suggestion: response.text().trim() });
+    const suggestion = await groqChat(prompt);
+    res.json({ suggestion });
   } catch (err) {
+    console.error('AI Meal Suggest Error:', err.response?.data || err.message);
     res.status(500).json({ suggestion: "Failed to load meal suggestion." });
   }
 });
@@ -343,8 +425,18 @@ app.get('/api/weekly', requireAuth, async (req, res) => {
     .order('date', { ascending: false })
     .limit(7);
 
-  if (error) res.status(500).json({ error: error.message });
-  else res.json(data.reverse());
+  if (error) {
+    res.status(500).json({ error: error.message });
+  } else {
+    // Map snake_case to camelCase for the frontend
+    const mapped = data.map(row => ({
+      ...row,
+      caloriesConsumed: row.calories_consumed || 0,
+      stepsWalked: row.steps_walked || 0,
+      caloriesBurned: row.calories_burned || 0
+    })).reverse();
+    res.json(mapped);
+  }
 });
 
 // Voice-to-Log AI Parser
@@ -354,20 +446,18 @@ app.post('/api/logs/voice', requireAuth, async (req, res) => {
 
   try {
     const prompt = `You are a nutrition expert. Extract food items and estimated calories from this text: "${text}". 
-    Respond ONLY with a JSON array of objects, with NO markdown formatting or code blocks.
-    Format: [{"name": "Food Name", "calories": number, "quantity": "amount/unit"}].
-    If quantity is unspecified, use "1 serving". Use standard calorie estimates if exact ones aren't given.`;
+    Respond ONLY with a JSON array based on this format: [{"name": "Food Name", "calories": number, "quantity": "amount/unit"}].
+    If quantity is unspecified, use "1 serving". Use standard calorie estimates if exact ones aren't given.
+    IMPORTANT: Provide ONLY the JSON array, no conversational text.`;
 
-    const result = await aiModel.generateContent(prompt);
-    const response = await result.response;
-    const textResult = response.text();
-    const jsonMatch = textResult.match(/\[[\s\S]*\]/);
+    const resultText = await groqChat(prompt);
+    const jsonMatch = resultText.match(/\[[\s\S]*\]/);
     if (!jsonMatch) throw new Error('No valid JSON array found in AI response');
     
     const parsed = JSON.parse(jsonMatch[0]);
     res.json({ success: true, items: Array.isArray(parsed) ? parsed : [parsed] });
   } catch (err) {
-    console.error('AI Voice Log Error:', err);
+    console.error('AI Voice Log Error:', err.response?.data || err.message);
     res.status(500).json({ error: 'Failed to process voice log with AI' });
   }
 });

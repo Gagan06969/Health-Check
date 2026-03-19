@@ -155,7 +155,7 @@
 }
 
 .food-row input, .food-row select {
-  background: rgba(255, 255, 255, 0.03);
+  background: #0c1d3a;
   border: 1px solid var(--border);
   padding: 10px 14px;
   border-radius: 12px;
@@ -417,14 +417,14 @@
   font-weight: 500;
 }
 
-/* remove arrows from number input */
-
+/* ensure arrows are visible and styled */
 .food-kcal::-webkit-inner-spin-button,
 .food-kcal::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
+  opacity: 1 !important;
+  cursor: pointer;
 }
 
 .food-kcal[type=number] {
-  -moz-appearance: textfield;
+  appearance: auto;
+  -moz-appearance: number-input;
 }

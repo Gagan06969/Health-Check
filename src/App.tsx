@@ -27,7 +27,7 @@ import type { User, DailyLog } from './types';
 import './App.css';
 
 function Dashboard() {
-  const { logout, userId } = useAuth();
+  const { logout, userId, username } = useAuth();
   const [user, setUser] = useState<User | null>(null);
   const [todayLog, setTodayLog] = useState<DailyLog | null>(null);
   const [weeklyData, setWeeklyData] = useState<DailyLog[]>([]);
@@ -156,7 +156,7 @@ function Dashboard() {
           <div className="logo-icon"><Activity size={24} /></div>
           <div>
             <h1>Health Tracker</h1>
-            <p>User ID: {userId} • Happy tracking! 👋</p>
+            <p>Welcome, <span className="highlight-text">{username || `User #${userId}`}</span> • Happy tracking! 👋</p>
           </div>
         </div>
 
@@ -371,8 +371,21 @@ function App() {
 }
 
 function AuthWrapper() {
-  const { isAuthenticated } = useAuth();
-  return isAuthenticated ? <Dashboard /> : <Login />;
+  const { isAuthenticated, isInitializing, username } = useAuth();
+  
+  if (isInitializing) {
+    return (
+      <div className="loading-screen">
+        <div className="spinner"></div>
+        <p>Restoring session...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) return <Login />;
+  if (!username) return <Login forceStep="username" />;
+  
+  return <Dashboard />;
 }
 
 export default App;

@@ -30,11 +30,21 @@ export const api = {
     return res.data;
   },
 
-  verifyOtp: async (email: string, otp: string): Promise<{ success: boolean; userId: number; hasProfile: boolean }> => {
+  verifyOtp: async (email: string, otp: string): Promise<{ success: boolean; userId: number; hasProfile: boolean; hasUsername: boolean; username: string | null }> => {
     const res = await client.post(`/auth/verify-otp`, { email, otp });
     if (res.data.success) {
       localStorage.setItem('health_tracker_user_id', res.data.userId.toString());
     }
+    return res.data;
+  },
+
+  checkUsername: async (username: string): Promise<{ available: boolean }> => {
+    const res = await client.get(`/auth/check-username?username=${encodeURIComponent(username)}`);
+    return res.data;
+  },
+
+  setUsername: async (username: string): Promise<{ success: boolean }> => {
+    const res = await client.post(`/auth/set-username`, { username });
     return res.data;
   },
 

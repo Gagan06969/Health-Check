@@ -1,33 +1,78 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-:root{
---bg:#0f172a;
---card:#111827;
---border:#1f2937;
-
---primary:#6366f1;
---secondary:#22c55e;
-
---text:#f9fafb;
---text2:#9ca3af;
+:root {
+  --bg: #0f172a;
+  --card: #111827;
+  --border: #1f2937;
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --secondary: #22c55e;
+  --text: #f9fafb;
+  --text-muted: #9ca3af;
+  --animation-spring: cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
-*{
-margin:0;
-padding:0;
-box-sizing:border-box;
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-body{
-font-family:'Inter',sans-serif;
-background:var(--bg);
-color:var(--text);
+body {
+  font-family: 'Inter', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
-button{
-cursor:pointer;
+button {
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
 }
 
-input{
-font-family:'Inter',sans-serif;
+input, select, textarea {
+  font-family: 'Inter', sans-serif;
+  color: var(--text);
+  outline: none;
+}
+
+/* Fix for white-on-white dropdowns in some browsers */
+select option {
+  background-color: #1e293b;
+  color: white;
+}
+
+/* Ensure number input arrows (incrementors) are visible and styled for dark mode */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  opacity: 1 !important;
+  cursor: pointer;
+  filter: invert(1);
+  padding: 4px;
+}
+
+/* Standardized glass input style */
+.glass-input {
+  background: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px;
+  padding: 12px 16px;
+  color: white;
+  transition: all 0.2s;
+}
+
+.glass-input:focus {
+  border-color: var(--primary) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Global simple fade animation */
+.anime-fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
 }
