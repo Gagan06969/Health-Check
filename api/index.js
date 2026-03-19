@@ -1,13 +1,28 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js');
-const axios = require('axios');
-const crypto = require('crypto');
-const nodemailer = require('nodemailer');
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import { createClient } from '@supabase/supabase-js';
+import axios from 'axios';
+import crypto from 'crypto';
+import nodemailer from 'nodemailer';
+
+// --- CONFIG VALIDATION ---
+const REQUIRED_ENV_VARS = [
+  'SUPABASE_URL',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'EMAIL_USER',
+  'EMAIL_PASS',
+  'GROQ_API_KEY'
+];
+
+const missingVars = REQUIRED_ENV_VARS.filter(v => !process.env[v]);
+if (missingVars.length > 0) {
+  console.error(`FATAL: Missing environment variables: ${missingVars.join(', ')}`);
+}
 
 // Initialize Groq Helper
 const groqChat = async (prompt, model = 'llama-3.3-70b-versatile') => {
+  if (!process.env.GROQ_API_KEY) throw new Error('GROQ_API_KEY is missing');
   const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
     model,
     messages: [{ role: 'user', content: prompt }],
@@ -22,7 +37,9 @@ const groqChat = async (prompt, model = 'llama-3.3-70b-versatile') => {
 };
 
 // Initialize Supabase
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) 
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+  : null;
 
 const app = express();
 
@@ -45,6 +62,7 @@ const hashEmail = (email) => {
 
 // Authentication Middleware
 const requireAuth = async (req, res, next) => {
+  if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized: No user_id provided' });
   
@@ -62,37 +80,61 @@ const requireAuth = async (req, res, next) => {
 
 // --- AUTH ROUTES ---
 app.post('/api/auth/send-otp', async (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email address required' });
-  const emailHash = hashEmail(email);
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-  await supabase.from('otps').upsert({ email_hash: emailHash, otp, expires_at: expiresAt }, { onConflict: 'email_hash' });
   try {
+    if (missingVars.length > 0) {
+      return res.status(500).json({ 
+        error: 'Server configuration error', 
+        details: `Missing environment variables: ${missingVars.join(', ')}. Please add them to Vercel project settings.` 
+      });
+    }
+    if (!supabase) return res.status(500).json({ error: 'Database connection failed' });
+
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email address required' });
+    
+    const emailHash = hashEmail(email);
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    
+    const { error: upsertError } = await supabase.from('otps').upsert(
+      { email_hash: emailHash, otp, expires_at: expiresAt }, 
+      { onConflict: 'email_hash' }
+    );
+    
+    if (upsertError) throw upsertError;
+
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: email,
       subject: 'Your Health Tracker OTP',
       html: `<div style="padding:20px; border:1px solid #ddd; border-radius:8px;"><h2>Health Tracker</h2><p>Your verification code is: <strong>${otp}</strong></p></div>`
     });
+    
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: 'Failed' });
+    console.error('send-otp error:', err);
+    res.status(500).json({ error: 'Failed to send OTP', details: err.message });
   }
 });
 
 app.post('/api/auth/verify-otp', async (req, res) => {
-  const { email, otp } = req.body;
-  const emailHash = hashEmail(email);
-  const { data: otpRow } = await supabase.from('otps').select('*').eq('email_hash', emailHash).single();
-  if (!otpRow || otpRow.otp !== otp || new Date() > new Date(otpRow.expires_at)) return res.status(400).json({ error: 'Invalid' });
-  const { data: user } = await supabase.from('users').upsert({ email_hash: emailHash }, { onConflict: 'email_hash' }).select('id, username').single();
-  await supabase.from('otps').delete().eq('email_hash', emailHash);
-  const { data: profile } = await supabase.from('user_profiles').select('*').eq('user_id', user.id).single();
-  res.json({ success: true, userId: user.id, username: user.username || null, hasUsername: !!user.username, hasProfile: !!profile });
+  try {
+    if (!supabase) return res.status(500).json({ error: 'Database connection failed' });
+    const { email, otp } = req.body;
+    const emailHash = hashEmail(email);
+    const { data: otpRow } = await supabase.from('otps').select('*').eq('email_hash', emailHash).single();
+    if (!otpRow || otpRow.otp !== otp || new Date() > new Date(otpRow.expires_at)) return res.status(400).json({ error: 'Invalid' });
+    const { data: user } = await supabase.from('users').upsert({ email_hash: emailHash }, { onConflict: 'email_hash' }).select('id, username').single();
+    await supabase.from('otps').delete().eq('email_hash', emailHash);
+    const { data: profile } = await supabase.from('user_profiles').select('*').eq('user_id', user.id).single();
+    res.json({ success: true, userId: user.id, username: user.username || null, hasUsername: !!user.username, hasProfile: !!profile });
+  } catch (err) {
+    res.status(500).json({ error: 'Verification failed' });
+  }
 });
 
 app.get('/api/auth/check-username', async (req, res) => {
+  if (!supabase) return res.status(500).json({ error: 'Database connection failed' });
   const { username } = req.query;
   const { data } = await supabase.from('users').select('id').ilike('username', username).maybeSingle();
   res.json({ available: !data });
@@ -177,10 +219,14 @@ app.get('/api/weekly', requireAuth, async (req, res) => {
 });
 
 app.post('/api/logs/voice', requireAuth, async (req, res) => {
-  const { text } = req.body;
-  const resultText = await groqChat(`Extract food items and estimated calories from: "${text}". Respond ONLY with JSON array: [{"name": "Food Name", "calories": number, "quantity": "amount/unit"}].`);
-  const jsonMatch = resultText.match(/\[[\s\S]*\]/);
-  res.json({ success: true, items: JSON.parse(jsonMatch[0]) });
+  try {
+    const { text } = req.body;
+    const resultText = await groqChat(`Extract food items and estimated calories from: "${text}". Respond ONLY with JSON array: [{"name": "Food Name", "calories": number, "quantity": "amount/unit"}].`);
+    const jsonMatch = resultText.match(/\[[\s\S]*\]/);
+    res.json({ success: true, items: JSON.parse(jsonMatch[0]) });
+  } catch (err) {
+    res.status(500).json({ error: 'Voice processing failed' });
+  }
 });
 
-module.exports = app;
+export default app;
