@@ -43,13 +43,16 @@ select option {
   color: white;
 }
 
-/* Ensure number input arrows (incrementors) are visible and styled for dark mode */
+/* Ensure number input arrows (incrementors) are hidden for a cleaner look */
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button {
-  opacity: 1 !important;
-  cursor: pointer;
-  filter: invert(1);
-  padding: 4px;
+  -webkit-appearance: none;
+  margin: 0;
+  display: none;
+}
+input[type="number"] {
+  appearance: none;
+  -moz-appearance: textfield;
 }
 
 /* Standardized glass input style */
