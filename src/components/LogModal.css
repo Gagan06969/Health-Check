@@ -88,6 +88,7 @@
   display: flex;
   gap: 10px;
   width: 100%;
+  position: relative;
 }
 
 .food-search {
@@ -149,39 +150,21 @@
   min-height: 4px;
 }
 
-.food-row {
-  display: flex;
-  gap: 10px;
-}
-
-.food-row input, .food-row select {
-  background: #0c1d3a;
+/* FLOATING DROPDOWN */
+.search-results-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #0f172a;
   border: 1px solid var(--border);
-  padding: 10px 14px;
-  border-radius: 12px;
-  color: white;
-  outline: none;
-}
-
-.food-kcal { width: 100px; }
-.food-unit { flex-grow: 1; }
-
-.food-add-btn {
-  background: var(--primary);
-  color: white;
-  border: none;
-  padding: 0 20px;
-  border-radius: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-/* ================= LISTS ================= */
-
-.search-results-list {
-  background: rgba(0, 0, 0, 0.2);
   border-radius: 16px;
-  overflow: hidden;
+  z-index: 1000;
+  margin-top: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+  box-shadow: 0 15px 35px -5px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(16px);
 }
 
 .food-option {
@@ -196,8 +179,46 @@
 .food-option:last-child { border: none; }
 .food-option:hover { background: rgba(255, 255, 255, 0.05); }
 
+.food-option-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .food-name { font-weight: 600; font-size: 14px; }
-.food-kcal-label { color: var(--secondary); font-size: 13px; font-weight: 700; }
+.food-brand { font-size: 11px; color: var(--text-muted); }
+.food-kcal-label { color: var(--secondary); font-size: 13px; font-weight: 700; align-self: center; }
+
+.food-row {
+  display: flex;
+  gap: 10px;
+}
+
+.food-row input, .food-row select {
+  background: #0c1d3a;
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  border-radius: 12px;
+  color: white;
+  outline: none;
+  font-size: 14px;
+}
+
+.food-qty { width: 70px; }
+.food-kcal { width: 100px; }
+.food-unit { width: 100%; }
+
+.food-add-btn {
+  background: var(--primary);
+  color: white;
+  border: none;
+  padding: 0 20px;
+  border-radius: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* ================= LISTS ================= */
 
 .food-list h3, .exercise-section h3 {
   font-size: 14px;
@@ -342,19 +363,6 @@
   background: var(--primary-hover);
   transform: translateY(-2px);
 }
-.steps-box input::-webkit-outer-spin-button,
-.steps-box input::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  appearance: none;
-  margin: 0;
-}
-
-.steps-box input[type=number] {
-  -moz-appearance: textfield;
-  appearance: textfield;
-}
-
-/* ---------- FOOTER ---------- */
 
 .modal-footer {
   margin-top: 25px;
@@ -369,62 +377,16 @@
   color: white;
   cursor: pointer;
 }
-/* FOOD ENTRY */
 
-.food-entry {
-  margin-top: 15px;
+/* Numeric input styling */
+.steps-box input::-webkit-outer-spin-button,
+.steps-box input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
 }
 
-.food-search {
-  width: 100%;
-  padding: 12px 14px;
-  border-radius: 8px;
-  border: none;
-  outline: none;
-  background: #0c1d3a;
-  color: white;
-  margin-bottom: 12px;
-}
-
-.food-search::placeholder {
-  color: #9aa6c4;
-}
-
-/* row containing kcal + unit + button */
-
-.food-row {
-  display: grid;
-  grid-template-columns: 140px 140px 1fr;
-  gap: 12px;
-}
-
-.food-kcal,
-.food-unit {
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: none;
-  background: #0c1d3a;
-  color: white;
-}
-
-.food-add-btn {
-  background: linear-gradient(135deg,#5a6cff,#7b6dff);
-  border: none;
-  border-radius: 8px;
-  padding: 10px;
-  color: white;
-  cursor: pointer;
-  font-weight: 500;
-}
-
-/* ensure arrows are visible and styled */
-.food-kcal::-webkit-inner-spin-button,
-.food-kcal::-webkit-outer-spin-button {
-  opacity: 1 !important;
-  cursor: pointer;
-}
-
-.food-kcal[type=number] {
-  appearance: auto;
-  -moz-appearance: number-input;
+.steps-box input[type=number] {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }

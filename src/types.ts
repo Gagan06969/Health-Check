@@ -15,7 +15,10 @@ export interface User {
 export interface Food {
   name: string;
   calories: number;
-  quantity: string;
+  quantity: string; // Keep for display/back-compat (e.g. "2 bowls")
+  amount?: number;   // New: numeric amount
+  unit?: string;     // New: unit name
+  calories_per_unit?: number; // New: base calorie info
   mealType: string;
 }
 
@@ -39,7 +42,7 @@ export interface FoodSearchResult {
   id: string | number;
   name: string;
   brand: string;
-  calories_per_100g: number;
+  calories_per_unit: number;
   unit: string;
   image: string | null;
 }

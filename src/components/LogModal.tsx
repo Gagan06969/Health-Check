@@ -48,6 +48,7 @@ export const LogModal: React.FC<LogModalProps> = ({
   const [searchResults, setSearchResults] = useState<FoodSearchResult[]>([]);
 
   const [customCalories, setCustomCalories] = useState(0);
+  const [servingQuantity, setServingQuantity] = useState(1);
   const [unit, setUnit] = useState("bowl");
   const [isListening, setIsListening] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
@@ -171,42 +172,29 @@ export const LogModal: React.FC<LogModalProps> = ({
 
     };
 
-    const timer = setTimeout(fetchFood, 400);
+    const timer = setTimeout(fetchFood, 200);
 
     return () => clearTimeout(timer);
 
   }, [searchQuery]);
 
-  /* -------- ADD FOOD FROM API -------- */
-
-  const addFood = (food: FoodSearchResult) => {
-
-    const calories = Number(food.calories_per_100g);
-
-    const newFood: Food = {
-      name: food.name,
-      calories,
-      quantity: `1 ${food.unit || "100g"}`,
-      mealType: activeMeal
-    };
-
-    setFoods(prev => [...prev, newFood]);
-
-    setCaloriesConsumed(prev => prev + calories);
-
-    setSearchQuery("");
+  const selectFood = (food: FoodSearchResult) => {
+    setSearchQuery(food.name);
+    setCustomCalories(food.calories_per_unit);
+    setUnit(food.unit);
+    setServingQuantity(1);
     setSearchResults([]);
-
   };
 
-  /* -------- ADD CUSTOM FOOD -------- */
+  /* -------- ADD CUSTOM/SELECTED FOOD -------- */
 
-  const addCustomFood = async () => {
-
+  const addFood = async () => {
     if (!searchQuery || !customCalories) return;
 
-    try {
+    const totalCalories = Math.round(customCalories * servingQuantity);
 
+    try {
+      // Save as custom food for future searches
       await api.createCustomFood({
         name: searchQuery,
         calories_per_serving: customCalories,
@@ -215,25 +203,26 @@ export const LogModal: React.FC<LogModalProps> = ({
 
       const newFood: Food = {
         name: searchQuery,
-        calories: customCalories,
-        quantity: `1 ${unit}`,
+        calories: totalCalories,
+        quantity: `${servingQuantity} ${unit}${servingQuantity > 1 ? 's' : ''}`,
+        amount: servingQuantity,
+        unit: unit,
+        calories_per_unit: customCalories,
         mealType: activeMeal
       };
 
       setFoods(prev => [...prev, newFood]);
+      setCaloriesConsumed(prev => prev + totalCalories);
 
-      setCaloriesConsumed(prev => prev + customCalories);
-
+      // Reset
       setSearchQuery("");
       setCustomCalories(0);
+      setServingQuantity(1);
 
     } catch (err) {
-
       console.error(err);
-      alert("Failed to save custom food");
-
+      alert("Failed to add food");
     }
-
   };
 
   /* -------- REMOVE FOOD -------- */
@@ -357,9 +346,37 @@ export const LogModal: React.FC<LogModalProps> = ({
                 <Mic size={18} />
               )}
             </button>
+
+            {/* FLOATING SEARCH RESULTS DROPDOWN */}
+            {searchResults.length > 0 && (
+              <div className="search-results-dropdown glass">
+                {searchResults.map((food, i) => (
+                  <div
+                    key={i}
+                    className="food-option"
+                    onClick={() => selectFood(food)}
+                  >
+                    <div className="food-option-info">
+                      <span className="food-name">{food.name}</span>
+                      <span className="food-brand">{food.brand}</span>
+                    </div>
+                    <span className="food-kcal-label">{food.calories_per_unit} kcal / {food.unit}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="food-row">
+            <input
+              type="number"
+              className="food-qty"
+              placeholder="Qty"
+              value={servingQuantity}
+              onChange={(e) => setServingQuantity(Number(e.target.value))}
+              min="0.1"
+              step="0.1"
+            />
 
             <input
               type="number"
@@ -378,31 +395,18 @@ export const LogModal: React.FC<LogModalProps> = ({
               <option value="piece">piece</option>
               <option value="cup">cup</option>
               <option value="plate">plate</option>
-              <option value="100g">100 g</option>
+              <option value="gram">gram</option>
+              <option value="100g">100g</option>
             </select>
 
-            <button className="food-add-btn" onClick={addCustomFood}>
-              Add Food
+            <button className="food-add-btn" onClick={addFood}>
+              Add
             </button>
-
           </div>
 
         </div>
 
-        {/* SEARCH RESULTS */}
-
-        <div className="search-results-list">
-          {searchResults.map((food, i) => (
-            <div
-              key={i}
-              className="food-option"
-              onClick={() => addFood(food)}
-            >
-              <span className="food-name">{food.name}</span>
-              <span className="food-kcal-label">{food.calories_per_100g} kcal</span>
-            </div>
-          ))}
-        </div>
+         {/* SEARCH RESULTS DROPDOWN WAS MOVED TO SEARCH-WRAP */}
 
         {/* FOOD LIST */}
 

@@ -83,6 +83,7 @@ app.post('/api/auth/send-otp', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
+
   try {
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
@@ -162,6 +163,7 @@ app.get('/api/auth/check-username', async (req, res) => {
     .maybeSingle();
 
   if (error) return res.status(500).json({ error: error.message });
+
   res.json({ available: !data });
 });
 
@@ -185,6 +187,7 @@ app.post('/api/auth/set-username', requireAuth, async (req, res) => {
     .eq('id', req.userId);
 
   if (error) return res.status(500).json({ error: error.message });
+
   res.json({ success: true });
 });
 
@@ -323,7 +326,8 @@ app.get('/api/food/search', requireAuth, async (req, res) => {
   const { query } = req.query;
   if (!query) return res.status(400).json({ error: 'Query parameter required' });
   
-  const { data: customRows, error: customError } = await supabase
+  // 1. Get custom foods
+  const { data: customRows } = await supabase
     .from('custom_food')
     .select('*')
     .eq('user_id', req.userId)
@@ -334,29 +338,30 @@ app.get('/api/food/search', requireAuth, async (req, res) => {
     id: `custom_${row.id}`,
     name: row.name,
     brand: 'Custom',
-    calories_per_100g: row.calories_per_serving,
+    calories_per_unit: row.calories_per_serving,
     unit: row.serving_unit,
     image: null
   }));
 
+  // 2. AI Search using Groq
   try {
-    const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=10`;
-    const response = await axios.get(url);
-    if (response.data?.products) {
-      const items = response.data.products
-        .filter(p => p.nutriments?.['energy-kcal_100g'])
-        .map(p => ({
-          id: p._id,
-          name: p.product_name || p.generic_name,
-          brand: p.brands?.split(',')[0] || 'Generic',
-          calories_per_100g: p.nutriments['energy-kcal_100g'],
-          unit: '100g',
-          image: p.image_front_thumb_url
-        }));
-      results = [...results, ...items].slice(0, 10);
+    const prompt = `You are a nutrition expert. Nutrition info for: "${query}".
+    Return ONLY a JSON array of 5 matches with: name, calories_per_unit, unit (like "bowl", "piece", "cup", "100g"), and brand (Generic/Brand).
+    Format: [{"name": "Food Name", "calories_per_unit": 250, "unit": "bowl", "brand": "Generic"}]`;
+
+    const aiRes = await groqChat(prompt);
+    const jsonMatch = aiRes.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      const aiItems = JSON.parse(jsonMatch[0]).map((item, i) => ({
+        id: `ai_${Date.now()}_${i}`,
+        ...item,
+        image: null
+      }));
+      results = [...results, ...aiItems].slice(0, 10);
     }
     res.json({ results });
   } catch (err) {
+    console.error('AI Search Error:', err);
     res.json({ results });
   }
 });
@@ -370,11 +375,15 @@ app.post('/api/food/custom', requireAuth, async (req, res) => {
 
   const { data, error } = await supabase
     .from('custom_food')
-    .insert({ user_id: req.userId, name, calories_per_serving, serving_unit })
+    .upsert({ user_id: req.userId, name, calories_per_serving, serving_unit }, { onConflict: 'user_id,name' })
     .select('id')
     .single();
 
-  if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+    logError('Add Custom Food Error', error);
+    return res.status(500).json({ error: error.message });
+  }
+
   res.json({ success: true, id: data.id });
 });
 
