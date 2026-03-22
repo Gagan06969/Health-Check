@@ -26,6 +26,19 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import type { User, DailyLog } from './types';
 import './App.css';
 
+const MOTIVATIONAL_QUOTES = [
+  "Consistency is the key to progress. Keep going!",
+  "Small steps lead to big changes. You've got this!",
+  "Your health is an investment, not an expense.",
+  "Every workout counts, even the short ones.",
+  "Eat for the body you want, not the one you have.",
+  "Discipline is doing what needs to be done, even when you don't feel like it.",
+  "Fitness is a journey, not a destination.",
+  "A one-hour workout is only 4% of your day. No excuses!",
+  "The only bad workout is the one that didn't happen.",
+  "Success starts with self-discipline."
+];
+
 function Dashboard() {
   const { logout, userId, username } = useAuth();
   const [user, setUser] = useState<User | null>(null);
@@ -40,6 +53,8 @@ function Dashboard() {
   const [suggestedMeal, setSuggestedMeal] = useState<{ meal: string; text: string } | null>(null);
   const [ingredientInputs, setIngredientInputs] = useState<Record<string, string>>({});
 
+  const [visitCount, setVisitCount] = useState(0);
+  const [currentQuote, setCurrentQuote] = useState("");
   const todayDate = format(new Date(), 'yyyy-MM-dd');
 
   const fetchData = useCallback(async () => {
@@ -67,6 +82,16 @@ function Dashboard() {
 
   useEffect(() => {
     fetchData();
+    
+    // Visit Tracking
+    const storedVisits = localStorage.getItem('visit_count');
+    const newCount = (parseInt(storedVisits || '0')) + 1;
+    localStorage.setItem('visit_count', newCount.toString());
+    setVisitCount(newCount);
+    
+    // Pick Quote
+    const quoteIndex = newCount % MOTIVATIONAL_QUOTES.length;
+    setCurrentQuote(MOTIVATIONAL_QUOTES[quoteIndex]);
   }, [fetchData]);
 
   /* ================= SAVE PROFILE ================= */
@@ -156,7 +181,11 @@ function Dashboard() {
           <div className="logo-icon"><Activity size={24} /></div>
           <div>
             <h1>Health Tracker</h1>
-            <p>Welcome, <span className="highlight-text">{username || `User #${userId}`}</span> • Happy tracking! 👋</p>
+            <div className="header-welcome-info">
+              <p>Welcome, <span className="highlight-text">{username || `User #${userId}`}</span> • Happy tracking! 👋</p>
+              <div className="visit-badge">Visit #{visitCount}</div>
+            </div>
+            {currentQuote && <p className="motivational-quote">"{currentQuote}"</p>}
           </div>
         </div>
 
